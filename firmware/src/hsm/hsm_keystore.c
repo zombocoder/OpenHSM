@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 1u
+#define STORE_VERSION 5u  /* usage_counter moved out of the authenticated AAD */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -40,16 +40,23 @@ typedef struct __attribute__((packed)) {
     uint16_t key_bits;
     uint8_t  exportable;
     uint8_t  auth_domain;
-    uint32_t usage_counter;
     uint32_t created_seq;
     uint8_t  label[HSM_LABEL_LEN];
     uint16_t key_len;
     uint8_t  reserved[2];
-    /* --- everything above is authenticated as GCM AAD --- */
+    /* --- everything above is the IMMUTABLE metadata, authenticated as GCM AAD.
+     *     usage_counter is mutable and MUST stay out of the AAD, else bumping it
+     *     invalidates the GCM tag and the key can never be loaded again. --- */
     uint8_t  nonce[12];
     uint8_t  tag[16];
     uint8_t  enc_key[KEY_BLOB_MAX];
+    uint32_t usage_counter; /* mutable; deliberately AFTER the AAD region        */
+    uint8_t  slot_pad[8];   /* pad to 160 bytes so every slot is 16-byte aligned */
 } keyslot_t;
+_Static_assert(sizeof(((keyslot_t *)0)->enc_key) == 64, "enc_key size");
+/* keyslot_t must be a multiple of 16 so slots[i] stay 16-aligned (store header
+ * is 16 bytes); the AES engine misbehaves on a 16-misaligned GCM AAD pointer. */
+_Static_assert((sizeof(keyslot_t) % 16) == 0, "keyslot not 16-aligned");
 
 #define SLOT_AAD_LEN  offsetof(keyslot_t, nonce)  /* metadata authenticated */
 
@@ -61,7 +68,8 @@ typedef struct __attribute__((packed)) {
     keyslot_t slots[HSM_MAX_OBJECTS];
 } store_t;
 
-static store_t   store;          /* RAM image */
+static store_t   store __attribute__((aligned(16)));  /* RAM image, 16-aligned
+                                  so each slot's GCM AAD pointer is 16-aligned */
 static uint8_t   kek[32];        /* derived at boot, kept in RAM only */
 
 /* ------------------------------------------------------------------------- */
@@ -189,6 +197,15 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
      * is already durable, so a power loss here only "wastes" an id at worst. */
     persist();
 
+    /* Self-verify: the freshly stored key must decrypt back. Catches a born-
+     * corrupt blob immediately instead of at first use. */
+    uint8_t vk[KEY_BLOB_MAX]; uint16_t vlen;
+    uint16_t vst = HSM_KeyStore_LoadKey(s->id, vk, &vlen);
+    memset(vk, 0, sizeof(vk));
+    if (vst != HSM_OK) {
+        return HSM_ERR_KEY_VERIFY;
+    }
+
     fill_info(s, out);
     return HSM_OK;
 }
@@ -233,3 +250,10 @@ uint16_t HSM_KeyStore_LoadKey(uint32_t id, uint8_t *out, uint16_t *out_len)
     *out_len = s->key_len;
     return HSM_OK;
 }
+
+void HSM_KeyStore_BumpUsage(uint32_t id)
+{
+    keyslot_t *s = find_slot(id);
+    if (s != NULL) s->usage_counter++;
+}
+

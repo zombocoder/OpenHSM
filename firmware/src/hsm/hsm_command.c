@@ -11,6 +11,9 @@
 #include "hsm_crypto.h"
 #include "hsm_session.h"
 #include "hsm_keystore.h"
+#include "hsm_eddsa.h"
+#include "hsm_x25519.h"
+#include "hsm_hash.h"
 
 #include <string.h>
 #include "stm32u5xx.h"
@@ -180,6 +183,96 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         memcpy(&rq, payload, sizeof(rq));
         uint16_t st = HSM_KeyStore_Delete(rq.id);
         return build_response(resp, &hdr, st, 0);
+    }
+
+    case HSM_CMD_GET_PUBLIC: {
+        if (hdr.payload_length < sizeof(hsm_objid_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + 32) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_objid_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        hsm_obj_info_t info;
+        if (HSM_KeyStore_Get(rq.id, &info) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
+        }
+        uint8_t seed[64]; uint16_t seed_len;
+        if (HSM_KeyStore_LoadKey(rq.id, seed, &seed_len) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        uint8_t pub[32];
+        if (info.algorithm == HSM_KEY_ED25519) {
+            HSM_Ed25519_Public(seed, pub);
+        } else if (info.algorithm == HSM_KEY_X25519) {
+            HSM_X25519_PublicKey(pub, seed);
+        } else {
+            memset(seed, 0, sizeof(seed));
+            return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
+        }
+        memset(seed, 0, sizeof(seed));
+        memcpy(resp + HSM_HEADER_SIZE, pub, 32);
+        return build_response(resp, &hdr, HSM_OK, 32);
+    }
+
+    case HSM_CMD_SIGN: {
+        if (hdr.payload_length < sizeof(hsm_keyop_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + HSM_ED25519_SIG_LEN) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_keyop_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        if (sizeof(rq) + rq.msg_len > hdr.payload_length) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_obj_info_t info;
+        if (HSM_KeyStore_Get(rq.id, &info) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
+        }
+        if (info.algorithm != HSM_KEY_ED25519 || !(info.capabilities & HSM_CAP_SIGN)) {
+            return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
+        }
+        uint8_t seed[64]; uint16_t seed_len;
+        if (HSM_KeyStore_LoadKey(rq.id, seed, &seed_len) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        uint8_t sig[HSM_ED25519_SIG_LEN];
+        HSM_Ed25519_Sign(seed, payload + sizeof(rq), rq.msg_len, sig);
+        memset(seed, 0, sizeof(seed));
+        HSM_KeyStore_BumpUsage(rq.id);
+        memcpy(resp + HSM_HEADER_SIZE, sig, sizeof(sig));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(sig));
+    }
+
+    case HSM_CMD_HMAC: {
+        if (hdr.payload_length < sizeof(hsm_keyop_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + HSM_SHA256_LEN) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_keyop_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        if (sizeof(rq) + rq.msg_len > hdr.payload_length) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_obj_info_t info;
+        if (HSM_KeyStore_Get(rq.id, &info) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
+        }
+        if (info.algorithm != HSM_KEY_HMAC256 || !(info.capabilities & HSM_CAP_SIGN)) {
+            return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
+        }
+        uint8_t key[64]; uint16_t key_len;
+        if (HSM_KeyStore_LoadKey(rq.id, key, &key_len) != HSM_OK) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        uint8_t mac[HSM_SHA256_LEN];
+        int rc = HSM_HmacSha256(key, key_len, payload + sizeof(rq), rq.msg_len, mac);
+        memset(key, 0, sizeof(key));
+        if (rc != 0) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        HSM_KeyStore_BumpUsage(rq.id);
+        memcpy(resp + HSM_HEADER_SIZE, mac, sizeof(mac));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(mac));
     }
 
     case HSM_CMD_RANDOM: {

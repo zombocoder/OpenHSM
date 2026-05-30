@@ -76,8 +76,10 @@ set(APP_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_hash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_aead.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_x25519.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_eddsa.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_crypto.c
-    ${VENDOR}/monocypher/src/monocypher.c)
+    ${VENDOR}/monocypher/src/monocypher.c
+    ${VENDOR}/monocypher/src/optional/monocypher-ed25519.c)
 
 set(STARTUP ${CMAKE_CURRENT_SOURCE_DIR}/startup/startup_stm32u585xx.s)
 
@@ -88,6 +90,7 @@ target_include_directories(openhsm.elf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto
     ${VENDOR}/monocypher/src
+    ${VENDOR}/monocypher/src/optional
     ${CMSIS}
     ${DEVICE}/Include
     ${HAL}/Inc

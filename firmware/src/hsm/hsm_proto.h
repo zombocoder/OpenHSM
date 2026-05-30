@@ -62,9 +62,11 @@ typedef enum {
     HSM_CMD_FIND_OBJECT     = 0x0023,
     HSM_CMD_DELETE_OBJECT   = 0x0024,
     HSM_CMD_GET_OBJECT      = 0x0025,
+    HSM_CMD_GET_PUBLIC      = 0x0026,  /* export public key of an asymmetric obj */
     HSM_CMD_HMAC            = 0x0030,
     HSM_CMD_WRAP            = 0x0031,
     HSM_CMD_UNWRAP          = 0x0032,
+    HSM_CMD_SIGN            = 0x0033,  /* Ed25519 signature with a stored key   */
     HSM_CMD_RANDOM          = 0x0040,
     HSM_CMD_GET_AUDIT_LOG   = 0x0050,
 } hsm_command_t;
@@ -78,6 +80,7 @@ typedef enum {
     HSM_ERR_NO_SESSION      = 0x0004,
     HSM_ERR_INVALID_PARAM   = 0x0005,
     HSM_ERR_NOT_IMPLEMENTED = 0x0006,
+    HSM_ERR_KEY_VERIFY      = 0x0007,  /* freshly stored key failed self-verify */
     HSM_ERR_INTERNAL        = 0x00FF,
 } hsm_status_t;
 
@@ -159,10 +162,19 @@ typedef struct __attribute__((packed)) {
     uint16_t count;
 } hsm_find_resp_t;
 
-/* DELETE_OBJECT / GET_OBJECT request payload. */
+/* DELETE_OBJECT / GET_OBJECT / GET_PUBLIC request payload. */
 typedef struct __attribute__((packed)) {
     uint32_t id;
 } hsm_objid_req_t;
+
+/* SIGN / HMAC request: header followed by `msg_len` bytes of message.
+ * SIGN response  = 64-byte Ed25519 signature.
+ * HMAC response  = 32-byte HMAC-SHA256.
+ * GET_PUBLIC response = 32-byte public key (Ed25519 / X25519). */
+typedef struct __attribute__((packed)) {
+    uint32_t id;
+    uint16_t msg_len;
+} hsm_keyop_req_t;
 
 /* SELFTEST response payload: per-primitive results (0 = pass, 1 = fail). */
 typedef struct __attribute__((packed)) {

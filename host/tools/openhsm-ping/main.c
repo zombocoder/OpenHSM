@@ -257,6 +257,124 @@ static void do_keystore(libusb_device_handle *h)
     }
 }
 
+/* Find an object by exact label, or generate one. Returns id (0 on failure). */
+static uint32_t find_or_generate(libusb_device_handle *h, const char *label,
+                                 uint16_t algo, uint16_t caps)
+{
+    uint8_t resp[HSM_MAX_MSG];
+    int resp_len = 0;
+    size_t llen = strlen(label);
+
+    if (send_command(h, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &resp_len) != 0)
+        return 0;
+    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+    if (rh.status == HSM_OK) {
+        hsm_find_resp_t fr; memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
+        const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
+        for (int i = 0; i < fr.count; i++) {
+            hsm_obj_info_t o; memcpy(&o, p + i * sizeof(o), sizeof(o));
+            if (o.algorithm == algo && memcmp(o.label, label, llen) == 0 &&
+                (llen == HSM_LABEL_LEN || o.label[llen] == 0))
+                return o.id;
+        }
+    }
+
+    hsm_genkey_req_t rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.algorithm = algo;
+    rq.key_bits = 256;
+    rq.capabilities = caps;
+    memcpy(rq.label, label, llen);
+    if (send_command(h, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
+                     resp, sizeof(resp), &resp_len) != 0) return 0;
+    memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK) {
+        printf("       (GENERATE %s failed: status=0x%04x)\n", label, rh.status);
+        return 0;
+    }
+    hsm_obj_info_t o; memcpy(&o, resp + HSM_HEADER_SIZE, sizeof(o));
+    return o.id;
+}
+
+/* Key-using operations: Ed25519 sign (host-verified) + HMAC (determinism). */
+static void do_keyops(libusb_device_handle *h)
+{
+    uint8_t resp[HSM_MAX_MSG];
+    int resp_len = 0;
+    const char msg[] = "OpenHSM signs this message";
+
+    /* ---- HMAC-SHA256 ---- */
+    {
+        const char *hmsg = msg;  /* 26 bytes (len % 4 == 2): arbitrary length */
+        uint32_t mid = find_or_generate(h, "openhsm-mac-key", HSM_KEY_HMAC256, HSM_CAP_SIGN);
+        if (mid == 0) { printf("HMAC  -> could not obtain HMAC key\n"); }
+        else {
+            uint8_t mac1[32], mac2[32];
+            int hok = 1;
+            for (int pass = 0; pass < 2; pass++) {
+                uint8_t req[sizeof(hsm_keyop_req_t) + 64];
+                hsm_keyop_req_t op = { .id = mid, .msg_len = (uint16_t)strlen(hmsg) };
+                memcpy(req, &op, sizeof(op));
+                memcpy(req + sizeof(op), hmsg, strlen(hmsg));
+                if (send_command(h, HSM_CMD_HMAC, req, sizeof(op) + strlen(hmsg),
+                                 resp, sizeof(resp), &resp_len) != 0) { hok = 0; break; }
+                hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+                if (rh.status != HSM_OK || resp_len < (int)(HSM_HEADER_SIZE + 32)) {
+                    printf("HMAC  -> failed (0x%04x)\n", rh.status); hok = 0; break;
+                }
+                memcpy(pass == 0 ? mac1 : mac2, resp + HSM_HEADER_SIZE, 32);
+            }
+            if (hok) {
+                printf("HMAC  -> id=%u mac=", mid);
+                for (int i = 0; i < 8; i++) printf("%02x", mac1[i]);
+                printf("..  deterministic=%s  [%s]\n",
+                       memcmp(mac1, mac2, 32) == 0 ? "yes" : "NO",
+                       memcmp(mac1, mac2, 32) == 0 ? "OK" : "FAIL");
+            }
+        }
+    }
+
+    /* ---- Ed25519 SIGN, verified on the host with the public key ---- */
+    uint32_t sid = find_or_generate(h, "openhsm-sign-key", HSM_KEY_ED25519, HSM_CAP_SIGN);
+    if (sid == 0) { printf("SIGN  -> could not obtain Ed25519 key\n"); }
+    else {
+        /* GET_PUBLIC */
+        uint8_t pub[32];
+        hsm_objid_req_t gq = { .id = sid };
+        if (send_command(h, HSM_CMD_GET_PUBLIC, (uint8_t *)&gq, sizeof(gq),
+                         resp, sizeof(resp), &resp_len) != 0) return;
+        hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+        if (rh.status != HSM_OK) { printf("SIGN  -> GET_PUBLIC failed (0x%04x)\n", rh.status); return; }
+        memcpy(pub, resp + HSM_HEADER_SIZE, 32);
+
+        /* SIGN */
+        uint8_t req[sizeof(hsm_keyop_req_t) + 64];
+        hsm_keyop_req_t op = { .id = sid, .msg_len = (uint16_t)strlen(msg) };
+        memcpy(req, &op, sizeof(op));
+        memcpy(req + sizeof(op), msg, strlen(msg));
+        if (send_command(h, HSM_CMD_SIGN, req, sizeof(op) + strlen(msg),
+                         resp, sizeof(resp), &resp_len) != 0) return;
+        memcpy(&rh, resp, sizeof(rh));
+        if (rh.status != HSM_OK || resp_len < (int)(HSM_HEADER_SIZE + 64)) {
+            printf("SIGN  -> failed (0x%04x)\n", rh.status); return;
+        }
+        const uint8_t *sig = resp + HSM_HEADER_SIZE;
+
+        int ok = crypto_sign_verify_detached(sig, (const uint8_t *)msg,
+                                             strlen(msg), pub) == 0;
+        /* Negative control: a tampered message must NOT verify. */
+        uint8_t bad[sizeof(msg)]; memcpy(bad, msg, strlen(msg)); bad[0] ^= 1;
+        int bad_ok = crypto_sign_verify_detached(sig, bad, strlen(msg), pub) == 0;
+
+        printf("SIGN  -> Ed25519 id=%u pub=", sid);
+        for (int i = 0; i < 8; i++) printf("%02x", pub[i]);
+        printf("..  verify=%s tamper-rejected=%s  [%s]\n",
+               ok ? "OK" : "FAIL", bad_ok ? "NO" : "yes",
+               (ok && !bad_ok) ? "OK" : "FAIL");
+    }
+
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -391,6 +509,9 @@ int main(void)
 
     /* ---- Key store (generate / find / get, persisted to flash) ---- */
     do_keystore(h);
+
+    /* ---- Key-using ops (Ed25519 sign verified on host, HMAC) ---- */
+    do_keyops(h);
 
     libusb_release_interface(h, 0);
     libusb_close(h);

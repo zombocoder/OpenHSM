@@ -38,4 +38,10 @@ uint16_t HSM_KeyStore_Delete(uint32_t id);
  */
 uint16_t HSM_KeyStore_LoadKey(uint32_t id, uint8_t *out, uint16_t *out_len);
 
+/**
+ * @brief Increment an object's usage counter (RAM only; not persisted per-op
+ *        to avoid flash wear — durable counters need wear-levelling, future).
+ */
+void HSM_KeyStore_BumpUsage(uint32_t id);
+
 #endif /* OPENHSM_HSM_KEYSTORE_H */
