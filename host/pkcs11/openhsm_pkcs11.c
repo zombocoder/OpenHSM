@@ -15,6 +15,11 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+/* Optional call tracing for bring-up against real PKCS#11 consumers. */
+#define DBG(...) do { if (getenv("OPENHSM_DEBUG")) { \
+    fprintf(stderr, "[p11] " __VA_ARGS__); fputc('\n', stderr); } } while (0)
 
 /* Single static slot/token. */
 #define OPENHSM_SLOT_ID  0
@@ -321,6 +326,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     if (!g_initialized) return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
     if (userType != CKU_USER && userType != CKU_SO) return CKR_USER_TYPE_INVALID;
+    DBG("C_Login userType=%lu pinLen=%lu", (unsigned long)userType, (unsigned long)ulPinLen);
     if (g_logged_in) return CKR_USER_ALREADY_LOGGED_IN;
     if (pPin == NULL || ulPinLen == 0) return CKR_PIN_INCORRECT;
 
@@ -328,6 +334,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     if (ohsm_cmd(g_ctx, HSM_CMD_AUTH, pPin, (uint16_t)ulPinLen,
                  resp, sizeof(resp), &rl) != 0) return CKR_DEVICE_ERROR;
     hsm_header_t *rh = (hsm_header_t *)resp;
+    DBG("C_Login device AUTH status=0x%04x", rh->status);
     switch (rh->status) {
     case HSM_OK:               g_logged_in = CK_TRUE; return CKR_OK;
     case HSM_ERR_LOCKED:       return CKR_PIN_LOCKED;
@@ -435,6 +442,14 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
     if (s->find_active) return CKR_OPERATION_ACTIVE;
 
+    DBG("C_FindObjectsInit nattr=%lu", (unsigned long)ulCount);
+    for (CK_ULONG i = 0; i < ulCount; i++) {
+        if (pTemplate[i].type == CKA_LABEL)
+            DBG("  filter CKA_LABEL=\"%.*s\"", (int)pTemplate[i].ulValueLen, (char *)pTemplate[i].pValue);
+        else if (pTemplate[i].type == CKA_CLASS)
+            DBG("  filter CKA_CLASS=%lu", (unsigned long)*(CK_OBJECT_CLASS *)pTemplate[i].pValue);
+        else DBG("  filter type=0x%lx", (unsigned long)pTemplate[i].type);
+    }
     CK_RV rv = load_objects(s);
     if (rv != CKR_OK) return rv;
 
@@ -445,6 +460,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     }
     s->find_pos = 0;
     s->find_active = CK_TRUE;
+    DBG("C_FindObjectsInit matched=%d of %d objects", s->nmatch, s->nobjs);
     return CKR_OK;
 }
 
@@ -728,15 +744,18 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
     rq.key_bits = 256;
     if (pMech->mechanism == CKM_AES_KEY_GEN) rq.algorithm = HSM_KEY_AES256;
     else if (pMech->mechanism == CKM_GENERIC_SECRET_KEY_GEN) rq.algorithm = HSM_KEY_HMAC256;
-    else return CKR_MECHANISM_INVALID;
+    else { DBG("C_GenerateKey bad mech 0x%lx", (unsigned long)pMech->mechanism); return CKR_MECHANISM_INVALID; }
     parse_keygen_template(pTemplate, ulCount, &rq);
+    DBG("C_GenerateKey mech=0x%lx alg=%u caps=0x%04x label=\"%.32s\"",
+        (unsigned long)pMech->mechanism, rq.algorithm, rq.capabilities, rq.label);
 
     uint8_t resp[HSM_MAX_MSG]; const uint8_t *out; int olen;
     CK_RV rv = device_cmd(HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
                           resp, sizeof(resp), &out, &olen);
-    if (rv != CKR_OK) return rv;
+    if (rv != CKR_OK) { DBG("C_GenerateKey device rv=0x%lx", (unsigned long)rv); return rv; }
     hsm_obj_info_t o; memcpy(&o, out, sizeof(o));
     *phKey = (CK_OBJECT_HANDLE)o.id;
+    DBG("C_GenerateKey -> handle=%lu", (unsigned long)o.id);
     return CKR_OK;
 }
 

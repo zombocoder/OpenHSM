@@ -28,3 +28,9 @@ add_executable(p11test p11test.c)
 target_include_directories(p11test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(p11test PRIVATE ${CMAKE_DL_LIBS})
 target_compile_options(p11test PRIVATE -Wall -Wextra)
+
+# One-shot key provisioning helper.
+add_executable(p11provision p11provision.c)
+target_include_directories(p11provision PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(p11provision PRIVATE ${CMAKE_DL_LIBS})
+target_compile_options(p11provision PRIVATE -Wall -Wextra)

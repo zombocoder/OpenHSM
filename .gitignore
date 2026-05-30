@@ -16,3 +16,8 @@ firmware/tools/gen_vectors
 compile_commands.json
 
 # NOTE: firmware/vendor/* are git submodules (see .gitmodules), not ignored.
+
+# OpenBao demo runtime
+host/openbao/data/
+host/openbao/*.log
+host/openbao/init.json
