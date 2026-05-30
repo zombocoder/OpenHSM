@@ -44,4 +44,20 @@ uint16_t HSM_KeyStore_LoadKey(uint32_t id, uint8_t *out, uint16_t *out_len);
  */
 void HSM_KeyStore_BumpUsage(uint32_t id);
 
+/**
+ * @brief Wrap (export) object @p target_id under wrapping key @p wrap_id
+ *        (AES-256 with HSM_CAP_WRAP). Target must be exportable.
+ * @return HSM_OK; writes the wrap blob to @p out_blob and its length to @p out_len.
+ */
+uint16_t HSM_KeyStore_Wrap(uint32_t wrap_id, uint32_t target_id,
+                           uint8_t *out_blob, uint16_t *out_len);
+
+/**
+ * @brief Unwrap (import) a wrap blob under wrapping key @p wrap_id (AES-256 with
+ *        HSM_CAP_UNWRAP), creating a new object with the given attributes.
+ */
+uint16_t HSM_KeyStore_Unwrap(uint32_t wrap_id, const uint8_t *blob, uint16_t blob_len,
+                             uint16_t caps, uint8_t exportable, uint8_t auth_domain,
+                             const uint8_t *label, hsm_obj_info_t *out);
+
 #endif /* OPENHSM_HSM_KEYSTORE_H */

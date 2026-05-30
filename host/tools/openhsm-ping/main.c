@@ -258,8 +258,8 @@ static void do_keystore(libusb_device_handle *h)
 }
 
 /* Find an object by exact label, or generate one. Returns id (0 on failure). */
-static uint32_t find_or_generate(libusb_device_handle *h, const char *label,
-                                 uint16_t algo, uint16_t caps)
+static uint32_t find_or_generate_ex(libusb_device_handle *h, const char *label,
+                                    uint16_t algo, uint16_t caps, uint8_t exportable)
 {
     uint8_t resp[HSM_MAX_MSG];
     int resp_len = 0;
@@ -284,6 +284,7 @@ static uint32_t find_or_generate(libusb_device_handle *h, const char *label,
     rq.algorithm = algo;
     rq.key_bits = 256;
     rq.capabilities = caps;
+    rq.exportable = exportable;
     memcpy(rq.label, label, llen);
     if (send_command(h, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
                      resp, sizeof(resp), &resp_len) != 0) return 0;
@@ -294,6 +295,12 @@ static uint32_t find_or_generate(libusb_device_handle *h, const char *label,
     }
     hsm_obj_info_t o; memcpy(&o, resp + HSM_HEADER_SIZE, sizeof(o));
     return o.id;
+}
+
+static uint32_t find_or_generate(libusb_device_handle *h, const char *label,
+                                 uint16_t algo, uint16_t caps)
+{
+    return find_or_generate_ex(h, label, algo, caps, 0);
 }
 
 /* Key-using operations: Ed25519 sign (host-verified) + HMAC (determinism). */
@@ -373,6 +380,74 @@ static void do_keyops(libusb_device_handle *h)
                (ok && !bad_ok) ? "OK" : "FAIL");
     }
 
+}
+
+/* Fetch the public key of an asymmetric object into pub[32]. Returns 1 on ok. */
+static int get_public(libusb_device_handle *h, uint32_t id, uint8_t pub[32])
+{
+    uint8_t resp[HSM_MAX_MSG]; int rl;
+    hsm_objid_req_t q = { .id = id };
+    if (send_command(h, HSM_CMD_GET_PUBLIC, (uint8_t *)&q, sizeof(q), resp, sizeof(resp), &rl) != 0)
+        return 0;
+    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK || rl < (int)(HSM_HEADER_SIZE + 32)) return 0;
+    memcpy(pub, resp + HSM_HEADER_SIZE, 32);
+    return 1;
+}
+
+/* Wrapped export round-trip: WRAP an exportable key under a wrapping key, then
+ * UNWRAP it into a new object; verify the key survived (same Ed25519 pubkey). */
+static void do_wrap(libusb_device_handle *h)
+{
+    uint8_t resp[HSM_MAX_MSG]; int rl;
+    hsm_header_t rh;
+
+    uint32_t wid = find_or_generate(h, "openhsm-wrap-key", HSM_KEY_AES256,
+                                    HSM_CAP_WRAP | HSM_CAP_UNWRAP);
+    /* An EXPORTABLE Ed25519 target (distinct from the non-exportable sign key). */
+    uint32_t tid = find_or_generate_ex(h, "openhsm-exp-key", HSM_KEY_ED25519,
+                                       HSM_CAP_SIGN, 1);
+    if (wid == 0 || tid == 0) { printf("WRAP  -> could not obtain keys\n"); return; }
+
+    uint8_t tpub[32];
+    if (!get_public(h, tid, tpub)) { printf("WRAP  -> GET_PUBLIC(target) failed\n"); return; }
+
+    /* WRAP */
+    hsm_wrap_req_t wq = { .wrap_id = wid, .target_id = tid };
+    if (send_command(h, HSM_CMD_WRAP, (uint8_t *)&wq, sizeof(wq), resp, sizeof(resp), &rl) != 0) return;
+    memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK) { printf("WRAP  -> failed (0x%04x)%s\n", rh.status,
+        rh.status == HSM_ERR_NOT_AUTHORIZED ? " (target not exportable?)" : ""); return; }
+    int blob_len = rh.payload_length;
+    uint8_t blob[256];
+    memcpy(blob, resp + HSM_HEADER_SIZE, blob_len);
+    printf("WRAP  -> %d-byte blob from key id=%u under wrap-key id=%u\n", blob_len, tid, wid);
+
+    /* UNWRAP into a new object */
+    uint8_t ureq[sizeof(hsm_unwrap_req_t) + 256];
+    hsm_unwrap_req_t uq;
+    memset(&uq, 0, sizeof(uq));
+    uq.wrap_id = wid;
+    uq.capabilities = HSM_CAP_SIGN;
+    uq.exportable = 0;
+    memcpy(uq.label, "openhsm-unwrapped", 17);
+    memcpy(ureq, &uq, sizeof(uq));
+    memcpy(ureq + sizeof(uq), blob, blob_len);
+    if (send_command(h, HSM_CMD_UNWRAP, ureq, sizeof(uq) + blob_len, resp, sizeof(resp), &rl) != 0) return;
+    memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK) { printf("UNWRAP-> failed (0x%04x)\n", rh.status); return; }
+    hsm_obj_info_t o; memcpy(&o, resp + HSM_HEADER_SIZE, sizeof(o));
+
+    /* Verify: the unwrapped key has the SAME public key as the original. */
+    uint8_t upub[32];
+    if (!get_public(h, o.id, upub)) { printf("UNWRAP-> GET_PUBLIC(new) failed\n"); return; }
+    printf("UNWRAP-> new id=%u  pubkey-matches-original=%s  [%s]\n",
+           o.id, memcmp(tpub, upub, 32) == 0 ? "yes" : "NO",
+           memcmp(tpub, upub, 32) == 0 ? "OK" : "FAIL");
+
+    /* Clean up the imported object so repeated runs don't fill the store. */
+    hsm_objid_req_t dq = { .id = o.id };
+    send_command(h, HSM_CMD_DELETE_OBJECT, (uint8_t *)&dq, sizeof(dq), resp, sizeof(resp), &rl);
 }
 
 int main(void)
@@ -512,6 +587,9 @@ int main(void)
 
     /* ---- Key-using ops (Ed25519 sign verified on host, HMAC) ---- */
     do_keyops(h);
+
+    /* ---- Wrapped export round-trip (WRAP -> UNWRAP -> verify) ---- */
+    do_wrap(h);
 
     libusb_release_interface(h, 0);
     libusb_close(h);

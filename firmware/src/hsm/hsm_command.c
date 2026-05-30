@@ -275,6 +275,38 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(mac));
     }
 
+    case HSM_CMD_WRAP: {
+        if (hdr.payload_length < sizeof(hsm_wrap_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + 128) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_wrap_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        uint16_t blob_len = 0;
+        uint16_t st = HSM_KeyStore_Wrap(rq.wrap_id, rq.target_id,
+                                        resp + HSM_HEADER_SIZE, &blob_len);
+        if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        return build_response(resp, &hdr, HSM_OK, blob_len);
+    }
+
+    case HSM_CMD_UNWRAP: {
+        if (hdr.payload_length < sizeof(hsm_unwrap_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + sizeof(hsm_obj_info_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_unwrap_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        const uint8_t *blob = payload + sizeof(rq);
+        uint16_t blob_len = (uint16_t)(hdr.payload_length - sizeof(rq));
+        hsm_obj_info_t info;
+        uint16_t st = HSM_KeyStore_Unwrap(rq.wrap_id, blob, blob_len,
+                                          rq.capabilities, rq.exportable,
+                                          rq.auth_domain, rq.label, &info);
+        if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
+    }
+
     case HSM_CMD_RANDOM: {
         if (hdr.payload_length < sizeof(hsm_random_req_t)) {
             return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);

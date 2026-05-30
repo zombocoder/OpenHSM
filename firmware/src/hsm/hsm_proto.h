@@ -167,6 +167,40 @@ typedef struct __attribute__((packed)) {
     uint32_t id;
 } hsm_objid_req_t;
 
+/* ---- Wrapped export / import ----
+ * A wrap blob = 8-byte header (authenticated as GCM AAD) || nonce(12) ||
+ * ciphertext(key_len) || tag(16), encrypted under a wrapping key with
+ * AES-256-GCM. Only keys with exportable=1 may be wrapped out; there is no
+ * plaintext export path at all. */
+#define HSM_WRAP_ALG_AES256GCM  1u
+#define HSM_WRAP_HDR_LEN        8u
+#define HSM_WRAP_NONCE_LEN      12u
+#define HSM_WRAP_TAG_LEN        16u
+
+typedef struct __attribute__((packed)) {
+    uint16_t wrap_alg;     /* HSM_WRAP_ALG_*                                    */
+    uint16_t key_type;     /* hsm_key_type_t of the wrapped key                 */
+    uint16_t key_len;      /* plaintext key length                              */
+    uint16_t flags;        /* reserved                                          */
+} hsm_wrap_hdr_t;
+
+/* WRAP request: wrapping key + target key to export. Response = wrap blob. */
+typedef struct __attribute__((packed)) {
+    uint32_t wrap_id;      /* AES-256 key with HSM_CAP_WRAP                      */
+    uint32_t target_id;    /* key to export (must be exportable)                */
+} hsm_wrap_req_t;
+
+/* UNWRAP request: wrapping key + new-object attributes, then the wrap blob.
+ * Response = hsm_obj_info_t for the newly imported object. */
+typedef struct __attribute__((packed)) {
+    uint32_t wrap_id;      /* AES-256 key with HSM_CAP_UNWRAP                    */
+    uint16_t capabilities; /* capabilities for the imported key                 */
+    uint8_t  exportable;
+    uint8_t  auth_domain;
+    uint8_t  label[HSM_LABEL_LEN];
+    /* wrap blob follows */
+} hsm_unwrap_req_t;
+
 /* SIGN / HMAC request: header followed by `msg_len` bytes of message.
  * SIGN response  = 64-byte Ed25519 signature.
  * HMAC response  = 32-byte HMAC-SHA256.

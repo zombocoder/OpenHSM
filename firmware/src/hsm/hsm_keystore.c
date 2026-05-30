@@ -137,20 +137,28 @@ static void fill_info(const keyslot_t *s, hsm_obj_info_t *out)
     memcpy(out->label, s->label, HSM_LABEL_LEN);
 }
 
-uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
+static uint16_t key_len_for(uint16_t algorithm)
 {
-    uint16_t key_len;
-    switch (req->algorithm) {
+    switch (algorithm) {
     case HSM_KEY_AES256:
     case HSM_KEY_HMAC256:
     case HSM_KEY_ED25519:
     case HSM_KEY_X25519:
-        key_len = 32;
-        break;
+        return 32;
     default:
+        return 0;
+    }
+}
+
+/* Store given key material into a fresh slot, encrypted under the KEK. */
+static uint16_t store_key(uint16_t algorithm, uint16_t key_bits, uint16_t caps,
+                          uint8_t exportable, uint8_t auth_domain,
+                          const uint8_t *label, const uint8_t *material,
+                          uint16_t mat_len, hsm_obj_info_t *out)
+{
+    if (mat_len == 0 || mat_len > KEY_BLOB_MAX) {
         return HSM_ERR_INVALID_PARAM;
     }
-
     keyslot_t *s = NULL;
     for (unsigned i = 0; i < HSM_MAX_OBJECTS; i++) {
         if (store.slots[i].magic != SLOT_MAGIC) { s = &store.slots[i]; break; }
@@ -159,33 +167,26 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
         return HSM_ERR_INTERNAL;  /* store full */
     }
 
-    uint8_t key[KEY_BLOB_MAX];
-    if (HSM_Rng_Fill(key, key_len) != 0) {
-        return HSM_ERR_INTERNAL;
-    }
-
     /* Populate metadata first (it is the GCM AAD). */
     memset(s, 0, sizeof(*s));
     s->magic        = SLOT_MAGIC;
     s->id           = store.next_id;
-    s->algorithm    = req->algorithm;
-    s->capabilities = req->capabilities;
-    s->key_bits     = req->key_bits;
-    s->exportable   = req->exportable;
-    s->auth_domain  = req->auth_domain;
+    s->algorithm    = algorithm;
+    s->capabilities = caps;
+    s->key_bits     = key_bits;
+    s->exportable   = exportable;
+    s->auth_domain  = auth_domain;
     s->usage_counter = 0;
     s->created_seq  = store.next_seq;
-    memcpy(s->label, req->label, HSM_LABEL_LEN);
-    s->key_len      = key_len;
+    memcpy(s->label, label, HSM_LABEL_LEN);
+    s->key_len      = mat_len;
 
     if (HSM_Rng_Fill(s->nonce, sizeof(s->nonce)) != 0 ||
         HSM_AesGcmEncrypt(kek, s->nonce, (const uint8_t *)s, SLOT_AAD_LEN,
-                          key, key_len, s->enc_key, s->tag) != 0) {
+                          material, mat_len, s->enc_key, s->tag) != 0) {
         memset(s, 0, sizeof(*s));
-        memset(key, 0, sizeof(key));
         return HSM_ERR_INTERNAL;
     }
-    memset(key, 0, sizeof(key));
 
     if (persist() != 0) {
         memset(s, 0, sizeof(*s));  /* roll back RAM image on flash failure */
@@ -197,8 +198,7 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
      * is already durable, so a power loss here only "wastes" an id at worst. */
     persist();
 
-    /* Self-verify: the freshly stored key must decrypt back. Catches a born-
-     * corrupt blob immediately instead of at first use. */
+    /* Self-verify: the freshly stored key must decrypt back. */
     uint8_t vk[KEY_BLOB_MAX]; uint16_t vlen;
     uint16_t vst = HSM_KeyStore_LoadKey(s->id, vk, &vlen);
     memset(vk, 0, sizeof(vk));
@@ -208,6 +208,23 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
 
     fill_info(s, out);
     return HSM_OK;
+}
+
+uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
+{
+    uint16_t key_len = key_len_for(req->algorithm);
+    if (key_len == 0) {
+        return HSM_ERR_INVALID_PARAM;
+    }
+    uint8_t key[KEY_BLOB_MAX];
+    if (HSM_Rng_Fill(key, key_len) != 0) {
+        return HSM_ERR_INTERNAL;
+    }
+    uint16_t st = store_key(req->algorithm, req->key_bits, req->capabilities,
+                            req->exportable, req->auth_domain, req->label,
+                            key, key_len, out);
+    memset(key, 0, sizeof(key));
+    return st;
 }
 
 uint16_t HSM_KeyStore_Find(const uint8_t *label, hsm_obj_info_t *out, uint16_t max)
@@ -255,5 +272,93 @@ void HSM_KeyStore_BumpUsage(uint32_t id)
 {
     keyslot_t *s = find_slot(id);
     if (s != NULL) s->usage_counter++;
+}
+
+/* Load an AES-256 wrapping key by id, enforcing the required capability. */
+static uint16_t load_wrapping_key(uint32_t id, uint16_t need_cap, uint8_t out[32])
+{
+    keyslot_t *s = find_slot(id);
+    if (s == NULL) return HSM_ERR_INVALID_PARAM;
+    if (s->algorithm != HSM_KEY_AES256 || !(s->capabilities & need_cap)) {
+        return HSM_ERR_NOT_AUTHORIZED;
+    }
+    uint16_t len;
+    return HSM_KeyStore_LoadKey(id, out, &len);
+}
+
+uint16_t HSM_KeyStore_Wrap(uint32_t wrap_id, uint32_t target_id,
+                           uint8_t *out_blob, uint16_t *out_len)
+{
+    keyslot_t *t = find_slot(target_id);
+    if (t == NULL) return HSM_ERR_INVALID_PARAM;
+    if (!t->exportable) return HSM_ERR_NOT_AUTHORIZED;  /* wrapped export only */
+
+    uint8_t wk[32];
+    uint16_t st = load_wrapping_key(wrap_id, HSM_CAP_WRAP, wk);
+    if (st != HSM_OK) return st;
+
+    uint8_t material[KEY_BLOB_MAX]; uint16_t mat_len;
+    st = HSM_KeyStore_LoadKey(target_id, material, &mat_len);
+    if (st != HSM_OK) { memset(wk, 0, sizeof(wk)); return st; }
+
+    /* blob = hdr(8) | nonce(12) | ct(mat_len) | tag(16) */
+    hsm_wrap_hdr_t hdr = { HSM_WRAP_ALG_AES256GCM, t->algorithm, mat_len, 0 };
+    memcpy(out_blob, &hdr, HSM_WRAP_HDR_LEN);
+    uint8_t *nonce = out_blob + HSM_WRAP_HDR_LEN;
+    uint8_t *ct    = nonce + HSM_WRAP_NONCE_LEN;
+    uint8_t *tag   = ct + mat_len;
+
+    int rc = HSM_Rng_Fill(nonce, HSM_WRAP_NONCE_LEN);
+    if (rc == 0) {
+        rc = HSM_AesGcmEncrypt(wk, nonce, out_blob, HSM_WRAP_HDR_LEN,
+                               material, mat_len, ct, tag);
+    }
+    memset(wk, 0, sizeof(wk));
+    memset(material, 0, sizeof(material));
+    if (rc != 0) return HSM_ERR_INTERNAL;
+
+    *out_len = (uint16_t)(HSM_WRAP_HDR_LEN + HSM_WRAP_NONCE_LEN + mat_len + HSM_WRAP_TAG_LEN);
+    return HSM_OK;
+}
+
+uint16_t HSM_KeyStore_Unwrap(uint32_t wrap_id, const uint8_t *blob, uint16_t blob_len,
+                             uint16_t caps, uint8_t exportable, uint8_t auth_domain,
+                             const uint8_t *label, hsm_obj_info_t *out)
+{
+    if (blob_len < HSM_WRAP_HDR_LEN + HSM_WRAP_NONCE_LEN + HSM_WRAP_TAG_LEN) {
+        return HSM_ERR_BAD_LENGTH;
+    }
+    hsm_wrap_hdr_t hdr;
+    memcpy(&hdr, blob, HSM_WRAP_HDR_LEN);
+    if (hdr.wrap_alg != HSM_WRAP_ALG_AES256GCM ||
+        key_len_for(hdr.key_type) == 0 || hdr.key_len != key_len_for(hdr.key_type)) {
+        return HSM_ERR_INVALID_PARAM;
+    }
+    if ((uint32_t)HSM_WRAP_HDR_LEN + HSM_WRAP_NONCE_LEN + hdr.key_len + HSM_WRAP_TAG_LEN
+        != blob_len) {
+        return HSM_ERR_BAD_LENGTH;
+    }
+
+    uint8_t wk[32];
+    uint16_t st = load_wrapping_key(wrap_id, HSM_CAP_UNWRAP, wk);
+    if (st != HSM_OK) return st;
+
+    const uint8_t *nonce = blob + HSM_WRAP_HDR_LEN;
+    const uint8_t *ct    = nonce + HSM_WRAP_NONCE_LEN;
+    const uint8_t *tag   = ct + hdr.key_len;
+
+    uint8_t material[KEY_BLOB_MAX];
+    int rc = HSM_AesGcmDecrypt(wk, nonce, blob, HSM_WRAP_HDR_LEN,
+                               ct, hdr.key_len, tag, material);
+    memset(wk, 0, sizeof(wk));
+    if (rc != 0) {
+        memset(material, 0, sizeof(material));
+        return HSM_ERR_NOT_AUTHORIZED;  /* bad wrapping key or tampered blob */
+    }
+
+    st = store_key(hdr.key_type, 256, caps, exportable, auth_domain,
+                   label, material, hdr.key_len, out);
+    memset(material, 0, sizeof(material));
+    return st;
 }
 
