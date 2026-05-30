@@ -1,0 +1,16 @@
+# Build outputs
+build/
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.obj
+
+# Vendored SDK (large; clone via the bootstrap script / documented commands)
+firmware/vendor/
+
+# Editor / OS
+.DS_Store
+.cache/
+compile_commands.json
