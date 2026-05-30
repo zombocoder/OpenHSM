@@ -16,13 +16,16 @@ extern "C" {
 /* ########################## Module Selection ############################## */
 #define HAL_MODULE_ENABLED
 #define HAL_CORTEX_MODULE_ENABLED
+#define HAL_CRYP_MODULE_ENABLED
 #define HAL_DMA_MODULE_ENABLED
 #define HAL_EXTI_MODULE_ENABLED
 #define HAL_FLASH_MODULE_ENABLED
 #define HAL_GPIO_MODULE_ENABLED
+#define HAL_HASH_MODULE_ENABLED
 #define HAL_PCD_MODULE_ENABLED
 #define HAL_PWR_MODULE_ENABLED
 #define HAL_RCC_MODULE_ENABLED
+#define HAL_RNG_MODULE_ENABLED
 
 /* ########################## Oscillator Values ############################ */
 #if !defined(HSE_VALUE)
@@ -96,6 +99,15 @@ extern "C" {
 #endif
 #ifdef HAL_PCD_MODULE_ENABLED
 #include "stm32u5xx_hal_pcd.h"
+#endif
+#ifdef HAL_RNG_MODULE_ENABLED
+#include "stm32u5xx_hal_rng.h"
+#endif
+#ifdef HAL_CRYP_MODULE_ENABLED
+#include "stm32u5xx_hal_cryp.h"
+#endif
+#ifdef HAL_HASH_MODULE_ENABLED
+#include "stm32u5xx_hal_hash.h"
 #endif
 
 /* ########################## Assert Macro ################################ */

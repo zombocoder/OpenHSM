@@ -48,7 +48,12 @@ set(HAL_SRC
     ${HAL}/Src/stm32u5xx_hal_flash_ex.c
     ${HAL}/Src/stm32u5xx_hal_pcd.c
     ${HAL}/Src/stm32u5xx_hal_pcd_ex.c
-    ${HAL}/Src/stm32u5xx_ll_usb.c)
+    ${HAL}/Src/stm32u5xx_ll_usb.c
+    ${HAL}/Src/stm32u5xx_hal_rng.c
+    ${HAL}/Src/stm32u5xx_hal_cryp.c
+    ${HAL}/Src/stm32u5xx_hal_cryp_ex.c
+    ${HAL}/Src/stm32u5xx_hal_hash.c
+    ${HAL}/Src/stm32u5xx_hal_hash_ex.c)
 
 set(USB_SRC
     ${USBLIB}/Src/usbd_core.c
@@ -63,7 +68,14 @@ set(APP_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/usb/usbd_desc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/usb/usbd_vendor.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/usb/usb_device.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_command.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_rng.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_hash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_aead.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_x25519.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_crypto.c
+    ${VENDOR}/monocypher/src/monocypher.c)
 
 set(STARTUP ${CMAKE_CURRENT_SOURCE_DIR}/startup/startup_stm32u585xx.s)
 
@@ -72,6 +84,8 @@ add_executable(openhsm.elf ${APP_SRC} ${HAL_SRC} ${USB_SRC} ${STARTUP})
 target_include_directories(openhsm.elf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto
+    ${VENDOR}/monocypher/src
     ${CMSIS}
     ${DEVICE}/Include
     ${HAL}/Inc

@@ -13,11 +13,13 @@
 #define VENDOR_EP_SIZE  HSM_MAX_PACKET
 
 typedef struct {
-    uint8_t  rx_buffer[HSM_MAX_PACKET];
-    uint8_t  tx_buffer[HSM_MAX_PACKET];
-    volatile uint32_t rx_length;
-    volatile uint8_t  rx_ready;  /* a packet is waiting to be processed */
-    volatile uint8_t  tx_busy;   /* an IN transfer is in flight */
+    uint8_t  rx_buffer[HSM_MAX_MSG];  /* reassembled inbound message  */
+    uint8_t  tx_buffer[HSM_MAX_MSG];  /* outbound message             */
+    volatile uint32_t rx_offset;      /* bytes accumulated so far     */
+    volatile uint32_t rx_expected;    /* total expected (0 until header seen) */
+    volatile uint32_t rx_length;      /* length of a completed message */
+    volatile uint8_t  rx_ready;       /* a message is waiting to be processed */
+    volatile uint8_t  tx_busy;        /* an IN transfer is in flight  */
 } USBD_Vendor_HandleTypeDef;
 
 extern USBD_ClassTypeDef USBD_Vendor;

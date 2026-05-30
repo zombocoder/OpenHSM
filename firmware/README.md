@@ -60,6 +60,7 @@ cd ../host/tools/openhsm-ping && cmake -S . -B build && cmake --build build
 ./build/openhsm-ping
 # PING  -> status=0x0000 magic=0x4F48534D (OK)
 # INFO  -> proto=0x0001 fw=0.1 serial=<96-bit UID>
+# RAND  -> 128 bytes: <hex from the hardware TRNG>
 ```
 
 ## Notes / things to adjust for your board

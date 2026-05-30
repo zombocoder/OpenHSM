@@ -8,6 +8,9 @@
 #include "main.h"
 #include "usb_device.h"
 #include "usbd_vendor.h"
+#include "hsm_rng.h"
+#include "hsm_crypto.h"
+#include "hsm_session.h"
 
 static void led_init(void)
 {
@@ -81,6 +84,9 @@ int main(void)
     SystemClock_Config();
 
     led_init();
+    HSM_Rng_Init();
+    HSM_Crypto_Init();
+    HSM_Session_Init();
     MX_USB_Device_Init();
 
     uint32_t last_blink = HAL_GetTick();

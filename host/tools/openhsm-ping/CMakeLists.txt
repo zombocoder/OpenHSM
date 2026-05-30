@@ -6,13 +6,15 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+pkg_check_modules(LIBSODIUM REQUIRED libsodium)
 
 add_executable(openhsm-ping main.c)
 
 target_include_directories(openhsm-ping PRIVATE
     ${LIBUSB_INCLUDE_DIRS}
+    ${LIBSODIUM_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../firmware/src/hsm)
 
-target_link_directories(openhsm-ping PRIVATE ${LIBUSB_LIBRARY_DIRS})
-target_link_libraries(openhsm-ping PRIVATE ${LIBUSB_LIBRARIES})
+target_link_directories(openhsm-ping PRIVATE ${LIBUSB_LIBRARY_DIRS} ${LIBSODIUM_LIBRARY_DIRS})
+target_link_libraries(openhsm-ping PRIVATE ${LIBUSB_LIBRARIES} ${LIBSODIUM_LIBRARIES})
 target_compile_options(openhsm-ping PRIVATE ${LIBUSB_CFLAGS_OTHER} -Wall -Wextra)

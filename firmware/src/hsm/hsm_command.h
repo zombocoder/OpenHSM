@@ -21,4 +21,16 @@
 size_t HSM_ProcessPacket(const uint8_t *req, size_t req_len,
                          uint8_t *resp, size_t resp_cap);
 
+/**
+ * @brief Process a plaintext (already-decrypted) command packet.
+ *        Used directly for unauthenticated commands and by the session layer
+ *        for the inner command of an encrypted envelope.
+ */
+size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
+                            uint8_t *resp, size_t resp_cap);
+
+/** @brief Build a response header in @p resp; returns total packet length. */
+size_t HSM_BuildResponse(uint8_t *resp, const uint8_t *req_hdr,
+                         uint16_t status, uint16_t payload_len);
+
 #endif /* OPENHSM_HSM_COMMAND_H */

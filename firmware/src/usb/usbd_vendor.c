@@ -186,9 +186,37 @@ static uint8_t Vendor_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum)
     if (h == NULL || epnum != (VENDOR_OUT_EP & 0x0FU)) {
         return USBD_OK;
     }
-    /* Defer processing to the main loop. */
-    h->rx_length = USBD_LL_GetRxDataSize(pdev, epnum);
-    h->rx_ready = 1U;
+    if (h->rx_ready) {
+        /* Previous message not yet consumed; drop this packet's data. */
+        return USBD_OK;
+    }
+
+    uint32_t n = USBD_LL_GetRxDataSize(pdev, epnum);
+    h->rx_offset += n;
+
+    /* Once the header is in, we know the total message length. */
+    if (h->rx_expected == 0U && h->rx_offset >= HSM_HEADER_SIZE) {
+        uint16_t pl = (uint16_t)(h->rx_buffer[12] | (h->rx_buffer[13] << 8));
+        if (pl > HSM_MAX_MSG_PAYLOAD) {
+            pl = HSM_MAX_MSG_PAYLOAD; /* clamp; dispatcher returns BAD_LENGTH */
+        }
+        h->rx_expected = HSM_HEADER_SIZE + pl;
+    }
+
+    /* A short packet ends the host transfer; the length field is the backup
+     * completion signal. Either way, cap at the buffer size. */
+    uint8_t complete = (n < VENDOR_EP_SIZE) ||
+                       (h->rx_expected != 0U && h->rx_offset >= h->rx_expected) ||
+                       (h->rx_offset >= HSM_MAX_MSG);
+
+    if (complete) {
+        h->rx_length = h->rx_offset;
+        h->rx_ready = 1U; /* hand off to USBD_Vendor_Poll() */
+    } else {
+        uint32_t space = HSM_MAX_MSG - h->rx_offset;
+        uint32_t want = space < VENDOR_EP_SIZE ? space : VENDOR_EP_SIZE;
+        USBD_LL_PrepareReceive(pdev, VENDOR_OUT_EP, h->rx_buffer + h->rx_offset, want);
+    }
     return USBD_OK;
 }
 
@@ -205,7 +233,11 @@ void USBD_Vendor_Poll(USBD_HandleTypeDef *pdev)
     size_t resp_len = HSM_ProcessPacket(h->rx_buffer, h->rx_length,
                                         h->tx_buffer, sizeof(h->tx_buffer));
 
-    /* Re-arm reception before transmitting so the next request is never lost. */
+    /* Reset reassembly state and re-arm reception before transmitting, so the
+     * next request is never lost. The HAL splits a >64-byte IN transfer into
+     * USB packets automatically. */
+    h->rx_offset = 0U;
+    h->rx_expected = 0U;
     h->rx_ready = 0U;
     USBD_LL_PrepareReceive(pdev, VENDOR_OUT_EP, h->rx_buffer, VENDOR_EP_SIZE);
 

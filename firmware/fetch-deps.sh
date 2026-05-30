@@ -19,5 +19,6 @@ clone cmsis_core      https://github.com/STMicroelectronics/cmsis_core.git
 clone cmsis_device_u5 https://github.com/STMicroelectronics/cmsis-device-u5.git
 clone stm32u5xx_hal   https://github.com/STMicroelectronics/stm32u5xx_hal_driver.git
 clone usb_device      https://github.com/STMicroelectronics/stm32_mw_usb_device.git
+clone monocypher      https://github.com/LoupVaillant/Monocypher.git
 
 echo "Done. Vendored SDK is in firmware/vendor/."
