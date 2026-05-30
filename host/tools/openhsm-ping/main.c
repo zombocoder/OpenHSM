@@ -183,6 +183,80 @@ static void do_session(libusb_device_handle *h)
     printf("  [%s]\n", inh.status == HSM_OK ? "OK" : "inner error");
 }
 
+static const char *alg_name(uint16_t a)
+{
+    switch (a) {
+    case HSM_KEY_AES256:  return "AES256";
+    case HSM_KEY_HMAC256: return "HMAC256";
+    case HSM_KEY_ED25519: return "Ed25519";
+    case HSM_KEY_X25519:  return "X25519";
+    default:              return "?";
+    }
+}
+
+/* Key store demo: list objects, generate a test key if absent (so a power
+ * cycle without reflashing demonstrates persistence), fetch it back. */
+static void do_keystore(libusb_device_handle *h)
+{
+    static const char TEST_LABEL[] = "openhsm-test-key";
+    uint8_t resp[HSM_MAX_MSG];
+    int resp_len = 0;
+
+    /* FIND all */
+    if (send_command(h, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &resp_len) != 0) return;
+    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK) { printf("KEYS  -> FIND failed (0x%04x)\n", rh.status); return; }
+    hsm_find_resp_t fr; memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
+    printf("KEYS  -> %u object(s) in store:\n", fr.count);
+
+    uint32_t found_id = 0;
+    const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
+    for (int i = 0; i < fr.count; i++) {
+        hsm_obj_info_t o; memcpy(&o, p + i * sizeof(o), sizeof(o));
+        char lbl[HSM_LABEL_LEN + 1] = {0};
+        memcpy(lbl, o.label, HSM_LABEL_LEN);
+        printf("         id=%u alg=%s caps=0x%04x bits=%u exp=%u seq=%u label=\"%s\"\n",
+               o.id, alg_name(o.algorithm), o.capabilities, o.key_bits,
+               o.exportable, o.created_seq, lbl);
+        if (memcmp(o.label, TEST_LABEL, sizeof(TEST_LABEL) - 1) == 0 &&
+            o.label[sizeof(TEST_LABEL) - 1] == 0)
+            found_id = o.id;
+    }
+
+    if (found_id != 0) {
+        printf("KEYS  -> test key persisted across boot: id=%u  [PERSIST OK]\n", found_id);
+    } else {
+        hsm_genkey_req_t rq;
+        memset(&rq, 0, sizeof(rq));
+        rq.algorithm = HSM_KEY_AES256;
+        rq.key_bits = 256;
+        rq.capabilities = HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT;
+        rq.exportable = 0;
+        memcpy(rq.label, TEST_LABEL, sizeof(TEST_LABEL) - 1);
+        if (send_command(h, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
+                         resp, sizeof(resp), &resp_len) != 0) return;
+        memcpy(&rh, resp, sizeof(rh));
+        if (rh.status != HSM_OK) { printf("KEYS  -> GENERATE failed (0x%04x)\n", rh.status); return; }
+        hsm_obj_info_t o; memcpy(&o, resp + HSM_HEADER_SIZE, sizeof(o));
+        found_id = o.id;
+        printf("KEYS  -> generated AES-256 key id=%u (reset without reflashing to test persistence)\n", o.id);
+    }
+
+    /* GET_OBJECT round-trip */
+    hsm_objid_req_t gq = { .id = found_id };
+    if (send_command(h, HSM_CMD_GET_OBJECT, (uint8_t *)&gq, sizeof(gq),
+                     resp, sizeof(resp), &resp_len) == 0) {
+        memcpy(&rh, resp, sizeof(rh));
+        if (rh.status == HSM_OK) {
+            hsm_obj_info_t o; memcpy(&o, resp + HSM_HEADER_SIZE, sizeof(o));
+            printf("KEYS  -> GET id=%u alg=%s usage=%u  [OK]\n",
+                   o.id, alg_name(o.algorithm), o.usage_counter);
+        } else {
+            printf("KEYS  -> GET failed (0x%04x)\n", rh.status);
+        }
+    }
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -314,6 +388,9 @@ int main(void)
 
     /* ---- Secure session (X25519 ECDH -> AES-256-GCM transport) ---- */
     do_session(h);
+
+    /* ---- Key store (generate / find / get, persisted to flash) ---- */
+    do_keystore(h);
 
     libusb_release_interface(h, 0);
     libusb_close(h);

@@ -61,6 +61,7 @@ typedef enum {
     HSM_CMD_EXPORT_WRAPPED  = 0x0022,
     HSM_CMD_FIND_OBJECT     = 0x0023,
     HSM_CMD_DELETE_OBJECT   = 0x0024,
+    HSM_CMD_GET_OBJECT      = 0x0025,
     HSM_CMD_HMAC            = 0x0030,
     HSM_CMD_WRAP            = 0x0031,
     HSM_CMD_UNWRAP          = 0x0032,
@@ -106,6 +107,62 @@ typedef struct __attribute__((packed)) {
     uint8_t eph_pub[32];      /* sender ephemeral X25519 public key             */
     uint8_t nonce[32];        /* sender 256-bit handshake nonce                 */
 } hsm_open_session_t;         /* used for both OPEN_SESSION request and response */
+
+/* ---- Key store ----------------------------------------------------------- */
+
+/* Object key types (stable wire constants). */
+typedef enum {
+    HSM_KEY_AES256   = 1,  /* 32-byte AES key                                  */
+    HSM_KEY_HMAC256  = 2,  /* 32-byte HMAC-SHA256 key                          */
+    HSM_KEY_ED25519  = 3,  /* 32-byte Ed25519 seed                             */
+    HSM_KEY_X25519   = 4,  /* 32-byte X25519 scalar                            */
+} hsm_key_type_t;
+
+/* Capability bitmask. */
+#define HSM_CAP_ENCRYPT  0x0001u
+#define HSM_CAP_DECRYPT  0x0002u
+#define HSM_CAP_SIGN     0x0004u
+#define HSM_CAP_VERIFY   0x0008u
+#define HSM_CAP_WRAP     0x0010u
+#define HSM_CAP_UNWRAP   0x0020u
+#define HSM_CAP_DERIVE   0x0040u
+
+#define HSM_LABEL_LEN    32u
+#define HSM_MAX_OBJECTS  8u
+
+/* GENERATE_KEY request payload. */
+typedef struct __attribute__((packed)) {
+    uint16_t algorithm;        /* hsm_key_type_t                                */
+    uint16_t key_bits;         /* e.g. 256 (advisory; type fixes the real size) */
+    uint16_t capabilities;     /* HSM_CAP_* bitmask                             */
+    uint8_t  exportable;       /* 0 = never leaves wrapped only                 */
+    uint8_t  auth_domain;
+    uint8_t  label[HSM_LABEL_LEN];
+} hsm_genkey_req_t;
+
+/* Object metadata returned by GENERATE_KEY / FIND_OBJECT / GET_OBJECT.
+ * Never contains key material. */
+typedef struct __attribute__((packed)) {
+    uint32_t id;
+    uint16_t algorithm;
+    uint16_t capabilities;
+    uint16_t key_bits;
+    uint8_t  exportable;
+    uint8_t  auth_domain;
+    uint32_t usage_counter;
+    uint32_t created_seq;      /* monotonic creation sequence (no RTC)          */
+    uint8_t  label[HSM_LABEL_LEN];
+} hsm_obj_info_t;
+
+/* FIND_OBJECT response: count followed by `count` hsm_obj_info_t records. */
+typedef struct __attribute__((packed)) {
+    uint16_t count;
+} hsm_find_resp_t;
+
+/* DELETE_OBJECT / GET_OBJECT request payload. */
+typedef struct __attribute__((packed)) {
+    uint32_t id;
+} hsm_objid_req_t;
 
 /* SELFTEST response payload: per-primitive results (0 = pass, 1 = fail). */
 typedef struct __attribute__((packed)) {

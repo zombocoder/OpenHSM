@@ -71,6 +71,8 @@ set(APP_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_command.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_rng.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_keystore.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_hash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_aead.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_x25519.c

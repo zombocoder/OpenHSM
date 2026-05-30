@@ -10,6 +10,7 @@
 #include "hsm_rng.h"
 #include "hsm_crypto.h"
 #include "hsm_session.h"
+#include "hsm_keystore.h"
 
 #include <string.h>
 #include "stm32u5xx.h"
@@ -124,6 +125,61 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         HSM_Crypto_SelfTest(&st);
         memcpy(resp + HSM_HEADER_SIZE, &st, sizeof(st));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(st));
+    }
+
+    case HSM_CMD_GENERATE_KEY: {
+        if (hdr.payload_length < sizeof(hsm_genkey_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + sizeof(hsm_obj_info_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_genkey_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        hsm_obj_info_t info;
+        uint16_t st = HSM_KeyStore_Generate(&rq, &info);
+        if (st != HSM_OK) {
+            return build_response(resp, &hdr, st, 0);
+        }
+        memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
+    }
+
+    case HSM_CMD_FIND_OBJECT: {
+        /* Optional 32-byte label filter; empty payload = list all. */
+        const uint8_t *label = (hdr.payload_length >= HSM_LABEL_LEN) ? payload : NULL;
+        hsm_find_resp_t fr;
+        hsm_obj_info_t infos[HSM_MAX_OBJECTS];
+        uint16_t fit = (uint16_t)((resp_cap - HSM_HEADER_SIZE - sizeof(fr)) / sizeof(hsm_obj_info_t));
+        if (fit > HSM_MAX_OBJECTS) fit = HSM_MAX_OBJECTS;
+        fr.count = HSM_KeyStore_Find(label, infos, fit);
+        memcpy(resp + HSM_HEADER_SIZE, &fr, sizeof(fr));
+        memcpy(resp + HSM_HEADER_SIZE + sizeof(fr), infos,
+               fr.count * sizeof(hsm_obj_info_t));
+        return build_response(resp, &hdr, HSM_OK,
+                              (uint16_t)(sizeof(fr) + fr.count * sizeof(hsm_obj_info_t)));
+    }
+
+    case HSM_CMD_GET_OBJECT: {
+        if (hdr.payload_length < sizeof(hsm_objid_req_t) ||
+            resp_cap < HSM_HEADER_SIZE + sizeof(hsm_obj_info_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_objid_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        hsm_obj_info_t info;
+        uint16_t st = HSM_KeyStore_Get(rq.id, &info);
+        if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
+    }
+
+    case HSM_CMD_DELETE_OBJECT: {
+        if (hdr.payload_length < sizeof(hsm_objid_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_objid_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        uint16_t st = HSM_KeyStore_Delete(rq.id);
+        return build_response(resp, &hdr, st, 0);
     }
 
     case HSM_CMD_RANDOM: {
