@@ -307,6 +307,46 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
     }
 
+    case HSM_CMD_ENCRYPT: {
+        if (hdr.payload_length < sizeof(hsm_aead_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_aead_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        if ((size_t)sizeof(rq) + rq.aad_len + rq.data_len > hdr.payload_length ||
+            resp_cap < HSM_HEADER_SIZE + rq.data_len + 16) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        const uint8_t *aad = payload + sizeof(rq);
+        const uint8_t *pt  = aad + rq.aad_len;
+        uint8_t *ct  = resp + HSM_HEADER_SIZE;
+        uint8_t *tag = ct + rq.data_len;
+        uint16_t st = HSM_KeyStore_Encrypt(rq.key_id, rq.nonce, aad, rq.aad_len,
+                                           pt, rq.data_len, ct, tag);
+        if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)(rq.data_len + 16));
+    }
+
+    case HSM_CMD_DECRYPT: {
+        if (hdr.payload_length < sizeof(hsm_aead_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_aead_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        if ((size_t)sizeof(rq) + rq.aad_len + rq.data_len + 16 > hdr.payload_length ||
+            resp_cap < HSM_HEADER_SIZE + rq.data_len) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        const uint8_t *aad = payload + sizeof(rq);
+        const uint8_t *ct  = aad + rq.aad_len;
+        const uint8_t *tag = ct + rq.data_len;
+        uint8_t *pt = resp + HSM_HEADER_SIZE;
+        uint16_t st = HSM_KeyStore_Decrypt(rq.key_id, rq.nonce, aad, rq.aad_len,
+                                           ct, rq.data_len, tag, pt);
+        if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        return build_response(resp, &hdr, HSM_OK, rq.data_len);
+    }
+
     case HSM_CMD_RANDOM: {
         if (hdr.payload_length < sizeof(hsm_random_req_t)) {
             return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);

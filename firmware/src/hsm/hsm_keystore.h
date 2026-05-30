@@ -44,6 +44,18 @@ uint16_t HSM_KeyStore_LoadKey(uint32_t id, uint8_t *out, uint16_t *out_len);
  */
 void HSM_KeyStore_BumpUsage(uint32_t id);
 
+/** @brief AES-256-GCM encrypt with stored key @p id (needs HSM_CAP_ENCRYPT). */
+uint16_t HSM_KeyStore_Encrypt(uint32_t id, const uint8_t nonce[12],
+                              const uint8_t *aad, uint16_t aad_len,
+                              const uint8_t *pt, uint16_t pt_len,
+                              uint8_t *ct_out, uint8_t tag_out[16]);
+
+/** @brief AES-256-GCM decrypt+verify with stored key @p id (needs HSM_CAP_DECRYPT). */
+uint16_t HSM_KeyStore_Decrypt(uint32_t id, const uint8_t nonce[12],
+                              const uint8_t *aad, uint16_t aad_len,
+                              const uint8_t *ct, uint16_t ct_len,
+                              const uint8_t tag[16], uint8_t *pt_out);
+
 /**
  * @brief Wrap (export) object @p target_id under wrapping key @p wrap_id
  *        (AES-256 with HSM_CAP_WRAP). Target must be exportable.

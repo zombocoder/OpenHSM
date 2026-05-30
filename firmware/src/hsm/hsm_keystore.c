@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 5u  /* usage_counter moved out of the authenticated AAD */
+#define STORE_VERSION 6u  /* reset: clear stale test keys that filled the store */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -272,6 +272,46 @@ void HSM_KeyStore_BumpUsage(uint32_t id)
 {
     keyslot_t *s = find_slot(id);
     if (s != NULL) s->usage_counter++;
+}
+
+uint16_t HSM_KeyStore_Encrypt(uint32_t id, const uint8_t nonce[12],
+                              const uint8_t *aad, uint16_t aad_len,
+                              const uint8_t *pt, uint16_t pt_len,
+                              uint8_t *ct_out, uint8_t tag_out[16])
+{
+    keyslot_t *s = find_slot(id);
+    if (s == NULL) return HSM_ERR_INVALID_PARAM;
+    if (s->algorithm != HSM_KEY_AES256 || !(s->capabilities & HSM_CAP_ENCRYPT)) {
+        return HSM_ERR_NOT_AUTHORIZED;
+    }
+    uint8_t key[KEY_BLOB_MAX]; uint16_t klen;
+    uint16_t st = HSM_KeyStore_LoadKey(id, key, &klen);
+    if (st != HSM_OK) return st;
+    int rc = HSM_AesGcmEncrypt(key, nonce, aad, aad_len, pt, pt_len, ct_out, tag_out);
+    memset(key, 0, sizeof(key));
+    if (rc != 0) return HSM_ERR_INTERNAL;
+    s->usage_counter++;
+    return HSM_OK;
+}
+
+uint16_t HSM_KeyStore_Decrypt(uint32_t id, const uint8_t nonce[12],
+                              const uint8_t *aad, uint16_t aad_len,
+                              const uint8_t *ct, uint16_t ct_len,
+                              const uint8_t tag[16], uint8_t *pt_out)
+{
+    keyslot_t *s = find_slot(id);
+    if (s == NULL) return HSM_ERR_INVALID_PARAM;
+    if (s->algorithm != HSM_KEY_AES256 || !(s->capabilities & HSM_CAP_DECRYPT)) {
+        return HSM_ERR_NOT_AUTHORIZED;
+    }
+    uint8_t key[KEY_BLOB_MAX]; uint16_t klen;
+    uint16_t st = HSM_KeyStore_LoadKey(id, key, &klen);
+    if (st != HSM_OK) return st;
+    int rc = HSM_AesGcmDecrypt(key, nonce, aad, aad_len, ct, ct_len, tag, pt_out);
+    memset(key, 0, sizeof(key));
+    if (rc != 0) return HSM_ERR_NOT_AUTHORIZED;  /* bad tag / wrong key */
+    s->usage_counter++;
+    return HSM_OK;
 }
 
 /* Load an AES-256 wrapping key by id, enforcing the required capability. */

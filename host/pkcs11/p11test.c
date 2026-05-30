@@ -116,6 +116,65 @@ int main(int argc, char **argv)
     printf("Find by label \"openhsm-test-key\": %lu match%s\n",
            (unsigned long)nobj, nobj == 1 ? "" : "es");
 
+    /* ---- Phase C: crypto ---- */
+
+    /* C_GenerateRandom */
+    unsigned char rnd[16] = {0};
+    if (fl->C_GenerateRandom(sess, rnd, sizeof(rnd)) == CKR_OK) {
+        printf("C_GenerateRandom 16 bytes: ");
+        for (int i = 0; i < 16; i++) printf("%02x", rnd[i]);
+        printf("\n");
+    }
+
+    /* helper: find first object with a given label */
+    CK_OBJECT_HANDLE aes_key = 0, hmac_key = 0;
+    {
+        struct { const char *label; CK_OBJECT_HANDLE *out; } want[] = {
+            { "openhsm-aead-key", &aes_key }, { "openhsm-mac-key", &hmac_key },
+        };
+        for (int w = 0; w < 2; w++) {
+            CK_ATTRIBUTE t[] = { { CKA_LABEL, (void *)want[w].label, strlen(want[w].label) } };
+            CK_OBJECT_HANDLE oh[4]; CK_ULONG n = 0;
+            fl->C_FindObjectsInit(sess, t, 1);
+            fl->C_FindObjects(sess, oh, 4, &n);
+            fl->C_FindObjectsFinal(sess);
+            if (n >= 1) *want[w].out = oh[0];
+        }
+    }
+
+    /* AES-GCM encrypt/decrypt round-trip (Vault's seal primitive) */
+    if (aes_key) {
+        unsigned char iv[12]; for (int i = 0; i < 12; i++) iv[i] = (unsigned char)(0x20 + i);
+        unsigned char aad[4] = { 1, 2, 3, 4 };
+        CK_GCM_PARAMS gp = { iv, sizeof(iv), sizeof(iv) * 8, aad, sizeof(aad), 128 };
+        CK_MECHANISM m = { CKM_AES_GCM, &gp, sizeof(gp) };
+        const char *pt = "vault master key";
+        unsigned char ct[64]; CK_ULONG ctlen = sizeof(ct);
+        unsigned char back[64]; CK_ULONG backlen = sizeof(back);
+
+        CK_RV e = fl->C_EncryptInit(sess, &m, aes_key);
+        if (e == CKR_OK) e = fl->C_Encrypt(sess, (CK_BYTE_PTR)pt, strlen(pt), ct, &ctlen);
+        CK_RV d = fl->C_DecryptInit(sess, &m, aes_key);
+        if (d == CKR_OK) d = fl->C_Decrypt(sess, ct, ctlen, back, &backlen);
+        int ok = (e == CKR_OK && d == CKR_OK && backlen == strlen(pt) &&
+                  memcmp(back, pt, backlen) == 0);
+        printf("AES-GCM enc(%lu)->ct(%lu)->dec(%lu) roundtrip [%s]\n",
+               (unsigned long)strlen(pt), (unsigned long)ctlen,
+               (unsigned long)backlen, ok ? "OK" : "FAIL");
+    } else printf("AES-GCM: no aes key (run openhsm-ping first)\n");
+
+    /* HMAC-SHA256 sign (Vault's seal HMAC) */
+    if (hmac_key) {
+        CK_MECHANISM m = { CKM_SHA256_HMAC, NULL, 0 };
+        const char *msg = "integrity";
+        unsigned char mac[32]; CK_ULONG maclen = sizeof(mac);
+        CK_RV rv2 = fl->C_SignInit(sess, &m, hmac_key);
+        if (rv2 == CKR_OK) rv2 = fl->C_Sign(sess, (CK_BYTE_PTR)msg, strlen(msg), mac, &maclen);
+        printf("HMAC-SHA256 sign rv=0x%lx len=%lu mac=", (unsigned long)rv2, (unsigned long)maclen);
+        for (int i = 0; i < 8 && i < (int)maclen; i++) printf("%02x", mac[i]);
+        printf(".. [%s]\n", (rv2 == CKR_OK && maclen == 32) ? "OK" : "FAIL");
+    } else printf("HMAC: no hmac key (run openhsm-ping first)\n");
+
     fl->C_Logout(sess);
     fl->C_CloseSession(sess);
 

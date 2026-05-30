@@ -450,6 +450,66 @@ static void do_wrap(libusb_device_handle *h)
     send_command(h, HSM_CMD_DELETE_OBJECT, (uint8_t *)&dq, sizeof(dq), resp, sizeof(resp), &rl);
 }
 
+/* AES-256-GCM encrypt/decrypt with a stored key: round-trip + tamper-reject. */
+static void do_aead(libusb_device_handle *h)
+{
+    uint8_t resp[HSM_MAX_MSG]; int rl;
+    hsm_header_t rh;
+    uint32_t kid = find_or_generate(h, "openhsm-aead-key", HSM_KEY_AES256,
+                                    HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT);
+    if (kid == 0) { printf("AEAD  -> could not obtain AES key\n"); return; }
+
+    const char pt[] = "Vault seal master-key material (test)";
+    uint16_t pt_len = (uint16_t)strlen(pt);
+    uint8_t aad[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    uint8_t nonce[12];
+    for (int i = 0; i < 12; i++) nonce[i] = (uint8_t)(0x10 + i);
+
+    /* ENCRYPT: req(20) + aad + pt */
+    uint8_t req[256];
+    hsm_aead_req_t er = { .key_id = kid, .aad_len = sizeof(aad), .data_len = pt_len };
+    memcpy(er.nonce, nonce, 12);
+    memcpy(req, &er, sizeof(er));
+    memcpy(req + sizeof(er), aad, sizeof(aad));
+    memcpy(req + sizeof(er) + sizeof(aad), pt, pt_len);
+    if (send_command(h, HSM_CMD_ENCRYPT, req, sizeof(er) + sizeof(aad) + pt_len,
+                     resp, sizeof(resp), &rl) != 0) return;
+    memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK || rh.payload_length != pt_len + 16) {
+        printf("AEAD  -> ENCRYPT failed (0x%04x)\n", rh.status); return;
+    }
+    uint8_t ct[256], tag[16];
+    memcpy(ct, resp + HSM_HEADER_SIZE, pt_len);
+    memcpy(tag, resp + HSM_HEADER_SIZE + pt_len, 16);
+    printf("AEAD  -> ENCRYPT id=%u ct[0:8]=", kid);
+    for (int i = 0; i < 8; i++) printf("%02x", ct[i]);
+    printf("\n");
+
+    /* DECRYPT: req(20) + aad + ct + tag */
+    hsm_aead_req_t dr = { .key_id = kid, .aad_len = sizeof(aad), .data_len = pt_len };
+    memcpy(dr.nonce, nonce, 12);
+    memcpy(req, &dr, sizeof(dr));
+    memcpy(req + sizeof(dr), aad, sizeof(aad));
+    memcpy(req + sizeof(dr) + sizeof(aad), ct, pt_len);
+    memcpy(req + sizeof(dr) + sizeof(aad) + pt_len, tag, 16);
+    int dlen = sizeof(dr) + sizeof(aad) + pt_len + 16;
+    if (send_command(h, HSM_CMD_DECRYPT, req, dlen, resp, sizeof(resp), &rl) != 0) return;
+    memcpy(&rh, resp, sizeof(rh));
+    int roundtrip = (rh.status == HSM_OK && rh.payload_length == pt_len &&
+                     memcmp(resp + HSM_HEADER_SIZE, pt, pt_len) == 0);
+
+    /* Negative: flip a tag byte → decrypt must fail. */
+    req[sizeof(dr) + sizeof(aad) + pt_len] ^= 1;
+    int tamper_rejected = 0;
+    if (send_command(h, HSM_CMD_DECRYPT, req, dlen, resp, sizeof(resp), &rl) == 0) {
+        memcpy(&rh, resp, sizeof(rh));
+        tamper_rejected = (rh.status != HSM_OK);
+    }
+    printf("AEAD  -> DECRYPT roundtrip=%s tamper-rejected=%s  [%s]\n",
+           roundtrip ? "OK" : "FAIL", tamper_rejected ? "yes" : "NO",
+           (roundtrip && tamper_rejected) ? "OK" : "FAIL");
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -590,6 +650,9 @@ int main(void)
 
     /* ---- Wrapped export round-trip (WRAP -> UNWRAP -> verify) ---- */
     do_wrap(h);
+
+    /* ---- AES-256-GCM encrypt/decrypt with a stored key ---- */
+    do_aead(h);
 
     libusb_release_interface(h, 0);
     libusb_close(h);

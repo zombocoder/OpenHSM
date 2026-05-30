@@ -236,6 +236,14 @@ typedef struct {
     CK_OBJECT_HANDLE matches[HSM_MAX_OBJECTS];
     int            nmatch;
     int            find_pos;
+    /* crypto-operation state (one of each kind may be active) */
+    CK_BBOOL       enc_active, dec_active, sign_active;
+    CK_MECHANISM_TYPE enc_mech, dec_mech, sign_mech;
+    CK_OBJECT_HANDLE  enc_key, dec_key, sign_key;
+    uint8_t        gcm_iv[16];   CK_ULONG gcm_iv_len;
+    uint8_t        gcm_aad[128]; CK_ULONG gcm_aad_len;   /* for encrypt */
+    uint8_t        dec_iv[16];   CK_ULONG dec_iv_len;
+    uint8_t        dec_aad[128]; CK_ULONG dec_aad_len;   /* for decrypt */
 } session_t;
 
 static session_t g_sessions[MAX_SESSIONS];
@@ -505,6 +513,254 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 }
 
 /* ===========================================================================
+ *  Crypto operations
+ * ===========================================================================*/
+
+/* Send a command and return the response header + payload pointer/len. */
+static CK_RV device_cmd(uint16_t cmd, const uint8_t *payload, uint16_t plen,
+                        uint8_t *resp, int cap, const uint8_t **out, int *out_len)
+{
+    int rl = 0;
+    if (ohsm_cmd(g_ctx, cmd, payload, plen, resp, cap, &rl) != 0) return CKR_DEVICE_ERROR;
+    hsm_header_t *rh = (hsm_header_t *)resp;
+    if (rh->status != HSM_OK) return CKR_FUNCTION_FAILED;
+    if (out) *out = resp + HSM_HEADER_SIZE;
+    if (out_len) *out_len = rh->payload_length;
+    return CKR_OK;
+}
+
+CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulLen)
+{
+    if (!g_initialized) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pData == NULL && ulLen) return CKR_ARGUMENTS_BAD;
+
+    uint8_t resp[HSM_MAX_MSG];
+    CK_ULONG done = 0;
+    while (done < ulLen) {
+        uint16_t chunk = (ulLen - done) > 256 ? 256 : (uint16_t)(ulLen - done);
+        uint8_t req[2] = { (uint8_t)chunk, (uint8_t)(chunk >> 8) };
+        const uint8_t *out; int olen;
+        if (device_cmd(HSM_CMD_RANDOM, req, 2, resp, sizeof(resp), &out, &olen) != CKR_OK)
+            return CKR_DEVICE_ERROR;
+        if (olen < chunk) return CKR_DEVICE_ERROR;
+        memcpy(pData + done, out, chunk);
+        done += chunk;
+    }
+    return CKR_OK;
+}
+
+/* ---- AES-GCM encrypt/decrypt ---- */
+CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech, CK_OBJECT_HANDLE hKey)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pMech == NULL || pMech->mechanism != CKM_AES_GCM) return CKR_MECHANISM_INVALID;
+    CK_GCM_PARAMS *p = (CK_GCM_PARAMS *)pMech->pParameter;
+    if (p == NULL || p->pIv == NULL || p->ulIvLen > sizeof(s->gcm_iv) ||
+        p->ulAADLen > sizeof(s->gcm_aad)) return CKR_MECHANISM_PARAM_INVALID;
+    memcpy(s->gcm_iv, p->pIv, p->ulIvLen);     s->gcm_iv_len = p->ulIvLen;
+    s->gcm_aad_len = p->ulAADLen;
+    if (p->ulAADLen) memcpy(s->gcm_aad, p->pAAD, p->ulAADLen);
+    s->enc_key = hKey; s->enc_mech = pMech->mechanism; s->enc_active = CK_TRUE;
+    return CKR_OK;
+}
+
+CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+                CK_BYTE_PTR pEnc, CK_ULONG_PTR pulEncLen)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (!s->enc_active) return CKR_OPERATION_NOT_INITIALIZED;
+    CK_ULONG need = ulDataLen + 16;            /* ciphertext || GCM tag */
+    if (pEnc == NULL) { *pulEncLen = need; return CKR_OK; }
+    if (*pulEncLen < need) { *pulEncLen = need; return CKR_BUFFER_TOO_SMALL; }
+
+    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
+    hsm_aead_req_t r = { .key_id = (uint32_t)s->enc_key,
+                         .aad_len = (uint16_t)s->gcm_aad_len,
+                         .data_len = (uint16_t)ulDataLen };
+    memset(r.nonce, 0, 12);
+    memcpy(r.nonce, s->gcm_iv, s->gcm_iv_len < 12 ? s->gcm_iv_len : 12);
+    size_t off = 0;
+    memcpy(req, &r, sizeof(r)); off += sizeof(r);
+    memcpy(req + off, s->gcm_aad, s->gcm_aad_len); off += s->gcm_aad_len;
+    memcpy(req + off, pData, ulDataLen); off += ulDataLen;
+
+    const uint8_t *out; int olen;
+    CK_RV rv = device_cmd(HSM_CMD_ENCRYPT, req, (uint16_t)off, resp, sizeof(resp), &out, &olen);
+    s->enc_active = CK_FALSE;
+    if (rv != CKR_OK) return rv;
+    if (olen != (int)need) return CKR_DEVICE_ERROR;
+    memcpy(pEnc, out, need);
+    *pulEncLen = need;
+    return CKR_OK;
+}
+
+CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech, CK_OBJECT_HANDLE hKey)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pMech == NULL || pMech->mechanism != CKM_AES_GCM) return CKR_MECHANISM_INVALID;
+    CK_GCM_PARAMS *p = (CK_GCM_PARAMS *)pMech->pParameter;
+    if (p == NULL || p->pIv == NULL || p->ulIvLen > sizeof(s->dec_iv) ||
+        p->ulAADLen > sizeof(s->dec_aad)) return CKR_MECHANISM_PARAM_INVALID;
+    memcpy(s->dec_iv, p->pIv, p->ulIvLen);     s->dec_iv_len = p->ulIvLen;
+    s->dec_aad_len = p->ulAADLen;
+    if (p->ulAADLen) memcpy(s->dec_aad, p->pAAD, p->ulAADLen);
+    s->dec_key = hKey; s->dec_mech = pMech->mechanism; s->dec_active = CK_TRUE;
+    return CKR_OK;
+}
+
+CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEnc, CK_ULONG ulEncLen,
+                CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (!s->dec_active) return CKR_OPERATION_NOT_INITIALIZED;
+    if (ulEncLen < 16) return CKR_ENCRYPTED_DATA_LEN_RANGE;
+    CK_ULONG ptlen = ulEncLen - 16;            /* strip the GCM tag */
+    if (pData == NULL) { *pulDataLen = ptlen; return CKR_OK; }
+    if (*pulDataLen < ptlen) { *pulDataLen = ptlen; return CKR_BUFFER_TOO_SMALL; }
+
+    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
+    hsm_aead_req_t r = { .key_id = (uint32_t)s->dec_key,
+                         .aad_len = (uint16_t)s->dec_aad_len,
+                         .data_len = (uint16_t)ptlen };
+    memset(r.nonce, 0, 12);
+    memcpy(r.nonce, s->dec_iv, s->dec_iv_len < 12 ? s->dec_iv_len : 12);
+    size_t off = 0;
+    memcpy(req, &r, sizeof(r)); off += sizeof(r);
+    memcpy(req + off, s->dec_aad, s->dec_aad_len); off += s->dec_aad_len;
+    memcpy(req + off, pEnc, ulEncLen); off += ulEncLen;   /* ct || tag */
+
+    const uint8_t *out; int olen;
+    CK_RV rv = device_cmd(HSM_CMD_DECRYPT, req, (uint16_t)off, resp, sizeof(resp), &out, &olen);
+    s->dec_active = CK_FALSE;
+    if (rv != CKR_OK) return CKR_ENCRYPTED_DATA_INVALID;   /* tag failure etc. */
+    if (olen != (int)ptlen) return CKR_DEVICE_ERROR;
+    memcpy(pData, out, ptlen);
+    *pulDataLen = ptlen;
+    return CKR_OK;
+}
+
+/* ---- Sign (HMAC-SHA256 / EdDSA) ---- */
+CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech, CK_OBJECT_HANDLE hKey)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pMech == NULL) return CKR_ARGUMENTS_BAD;
+    if (pMech->mechanism != CKM_SHA256_HMAC && pMech->mechanism != CKM_EDDSA)
+        return CKR_MECHANISM_INVALID;
+    s->sign_key = hKey; s->sign_mech = pMech->mechanism; s->sign_active = CK_TRUE;
+    return CKR_OK;
+}
+
+CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+             CK_BYTE_PTR pSig, CK_ULONG_PTR pulSigLen)
+{
+    session_t *s = session_of(hSession);
+    if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (!s->sign_active) return CKR_OPERATION_NOT_INITIALIZED;
+    CK_ULONG siglen = (s->sign_mech == CKM_EDDSA) ? 64 : 32;
+    uint16_t devcmd = (s->sign_mech == CKM_EDDSA) ? HSM_CMD_SIGN : HSM_CMD_HMAC;
+    if (pSig == NULL) { *pulSigLen = siglen; return CKR_OK; }
+    if (*pulSigLen < siglen) { *pulSigLen = siglen; return CKR_BUFFER_TOO_SMALL; }
+
+    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
+    hsm_keyop_req_t r = { .id = (uint32_t)s->sign_key, .msg_len = (uint16_t)ulDataLen };
+    memcpy(req, &r, sizeof(r));
+    memcpy(req + sizeof(r), pData, ulDataLen);
+
+    const uint8_t *out; int olen;
+    CK_RV rv = device_cmd(devcmd, req, (uint16_t)(sizeof(r) + ulDataLen),
+                          resp, sizeof(resp), &out, &olen);
+    s->sign_active = CK_FALSE;
+    if (rv != CKR_OK) return rv;
+    if (olen != (int)siglen) return CKR_DEVICE_ERROR;
+    memcpy(pSig, out, siglen);
+    *pulSigLen = siglen;
+    return CKR_OK;
+}
+
+/* ---- Key generation ---- */
+static void parse_keygen_template(CK_ATTRIBUTE_PTR t, CK_ULONG n,
+                                  hsm_genkey_req_t *rq)
+{
+    for (CK_ULONG i = 0; i < n; i++) {
+        CK_BBOOL b = (t[i].pValue && t[i].ulValueLen >= 1) ? *(CK_BBOOL *)t[i].pValue : CK_FALSE;
+        switch (t[i].type) {
+        case CKA_LABEL: {
+            CK_ULONG l = t[i].ulValueLen; if (l > HSM_LABEL_LEN) l = HSM_LABEL_LEN;
+            memcpy(rq->label, t[i].pValue, l);
+            break;
+        }
+        case CKA_ENCRYPT:    if (b) rq->capabilities |= HSM_CAP_ENCRYPT; break;
+        case CKA_DECRYPT:    if (b) rq->capabilities |= HSM_CAP_DECRYPT; break;
+        case CKA_SIGN:       if (b) rq->capabilities |= HSM_CAP_SIGN; break;
+        case CKA_VERIFY:     if (b) rq->capabilities |= HSM_CAP_VERIFY; break;
+        case CKA_WRAP:       if (b) rq->capabilities |= HSM_CAP_WRAP; break;
+        case CKA_UNWRAP:     if (b) rq->capabilities |= HSM_CAP_UNWRAP; break;
+        case CKA_DERIVE:     if (b) rq->capabilities |= HSM_CAP_DERIVE; break;
+        case CKA_EXTRACTABLE: rq->exportable = b ? 1 : 0; break;
+        default: break;
+        }
+    }
+}
+
+CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
+                    CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                    CK_OBJECT_HANDLE_PTR phKey)
+{
+    if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pMech == NULL || phKey == NULL) return CKR_ARGUMENTS_BAD;
+
+    hsm_genkey_req_t rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.key_bits = 256;
+    if (pMech->mechanism == CKM_AES_KEY_GEN) rq.algorithm = HSM_KEY_AES256;
+    else if (pMech->mechanism == CKM_GENERIC_SECRET_KEY_GEN) rq.algorithm = HSM_KEY_HMAC256;
+    else return CKR_MECHANISM_INVALID;
+    parse_keygen_template(pTemplate, ulCount, &rq);
+
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *out; int olen;
+    CK_RV rv = device_cmd(HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
+                          resp, sizeof(resp), &out, &olen);
+    if (rv != CKR_OK) return rv;
+    hsm_obj_info_t o; memcpy(&o, out, sizeof(o));
+    *phKey = (CK_OBJECT_HANDLE)o.id;
+    return CKR_OK;
+}
+
+CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
+                        CK_ATTRIBUTE_PTR pPubT, CK_ULONG ulPubN,
+                        CK_ATTRIBUTE_PTR pPrivT, CK_ULONG ulPrivN,
+                        CK_OBJECT_HANDLE_PTR phPub, CK_OBJECT_HANDLE_PTR phPriv)
+{
+    (void)pPubT; (void)ulPubN;
+    if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pMech == NULL || phPub == NULL || phPriv == NULL) return CKR_ARGUMENTS_BAD;
+    if (pMech->mechanism != CKM_EC_EDWARDS_KEY_PAIR_GEN) return CKR_MECHANISM_INVALID;
+
+    hsm_genkey_req_t rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.algorithm = HSM_KEY_ED25519;
+    rq.key_bits = 256;
+    parse_keygen_template(pPrivT, ulPrivN, &rq);
+
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *out; int olen;
+    CK_RV rv = device_cmd(HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
+                          resp, sizeof(resp), &out, &olen);
+    if (rv != CKR_OK) return rv;
+    hsm_obj_info_t o; memcpy(&o, out, sizeof(o));
+    /* One device object models the keypair; both handles map to it. The public
+     * key bytes are retrievable via CKA_EC_POINT / GET_PUBLIC (future). */
+    *phPriv = (CK_OBJECT_HANDLE)o.id;
+    *phPub  = (CK_OBJECT_HANDLE)o.id;
+    return CKR_OK;
+}
+
+/* ===========================================================================
  *  Function list
  * ===========================================================================*/
 static CK_FUNCTION_LIST function_list = {
@@ -528,7 +784,15 @@ static CK_FUNCTION_LIST function_list = {
     .C_FindObjects       = C_FindObjects,
     .C_FindObjectsFinal  = C_FindObjectsFinal,
     .C_GetAttributeValue = C_GetAttributeValue,
-    /* later phase: crypto */
+    .C_GenerateRandom    = C_GenerateRandom,
+    .C_EncryptInit       = C_EncryptInit,
+    .C_Encrypt           = C_Encrypt,
+    .C_DecryptInit       = C_DecryptInit,
+    .C_Decrypt           = C_Decrypt,
+    .C_SignInit          = C_SignInit,
+    .C_Sign              = C_Sign,
+    .C_GenerateKey       = C_GenerateKey,
+    .C_GenerateKeyPair   = C_GenerateKeyPair,
 };
 
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)

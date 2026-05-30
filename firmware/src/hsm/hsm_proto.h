@@ -68,6 +68,8 @@ typedef enum {
     HSM_CMD_UNWRAP          = 0x0032,
     HSM_CMD_SIGN            = 0x0033,  /* Ed25519 signature with a stored key   */
     HSM_CMD_RANDOM          = 0x0040,
+    HSM_CMD_ENCRYPT         = 0x0041,  /* AES-256-GCM with a stored key         */
+    HSM_CMD_DECRYPT         = 0x0042,
     HSM_CMD_GET_AUDIT_LOG   = 0x0050,
 } hsm_command_t;
 
@@ -221,6 +223,18 @@ typedef struct __attribute__((packed)) {
     uint8_t x25519_pub;
     uint8_t overall;          /* 0 if every test passed                        */
 } hsm_selftest_t;
+
+/* ENCRYPT / DECRYPT request: AES-256-GCM with a stored AES key.
+ *   header || nonce(12) || aad(aad_len) || data(data_len) [|| tag(16) for DECRYPT]
+ * ENCRYPT response = ciphertext(data_len) || tag(16).
+ * DECRYPT response = plaintext(data_len) (or HSM_ERR_NOT_AUTHORIZED on bad tag).
+ * data_len is the plaintext length (ENCRYPT) or ciphertext length (DECRYPT). */
+typedef struct __attribute__((packed)) {
+    uint32_t key_id;
+    uint16_t aad_len;
+    uint16_t data_len;
+    uint8_t  nonce[12];
+} hsm_aead_req_t;
 
 /* RANDOM request payload: number of random bytes requested (little-endian). */
 typedef struct __attribute__((packed)) {
