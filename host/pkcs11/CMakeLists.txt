@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+pkg_check_modules(LIBSODIUM REQUIRED libsodium)
 
 # Shared PKCS#11 provider module.
 add_library(openhsm_pkcs11 SHARED
@@ -15,10 +16,11 @@ add_library(openhsm_pkcs11 SHARED
 target_include_directories(openhsm_pkcs11 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIBUSB_INCLUDE_DIRS}
+    ${LIBSODIUM_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../firmware/src/hsm)  # hsm_proto.h
 
-target_link_directories(openhsm_pkcs11 PRIVATE ${LIBUSB_LIBRARY_DIRS})
-target_link_libraries(openhsm_pkcs11 PRIVATE ${LIBUSB_LIBRARIES})
+target_link_directories(openhsm_pkcs11 PRIVATE ${LIBUSB_LIBRARY_DIRS} ${LIBSODIUM_LIBRARY_DIRS})
+target_link_libraries(openhsm_pkcs11 PRIVATE ${LIBUSB_LIBRARIES} ${LIBSODIUM_LIBRARIES})
 target_compile_options(openhsm_pkcs11 PRIVATE -Wall -Wextra ${LIBUSB_CFLAGS_OTHER})
 
 # Development test harness (dlopen-based).

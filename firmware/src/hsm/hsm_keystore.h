@@ -13,6 +13,12 @@
 void HSM_KeyStore_Init(void);
 
 /**
+ * @brief Verify a PIN, managing the persistent retry counter / lockout.
+ * @return HSM_OK, HSM_ERR_LOCKED, or HSM_ERR_NOT_AUTHORIZED; *tries_left updated.
+ */
+uint16_t HSM_KeyStore_Auth(const uint8_t *pin, uint16_t len, uint8_t *tries_left);
+
+/**
  * @brief Generate a new random key, encrypt it under the KEK, persist it.
  * @return HSM_OK or an hsm_status_t error.
  */

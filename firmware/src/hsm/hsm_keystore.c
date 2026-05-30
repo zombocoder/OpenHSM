@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 6u  /* reset: clear stale test keys that filled the store */
+#define STORE_VERSION 7u  /* added PIN auth state to the store header */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -65,8 +65,16 @@ typedef struct __attribute__((packed)) {
     uint32_t  version;
     uint32_t  next_id;
     uint32_t  next_seq;
+    /* PIN auth state (persistent: retry counter / lockout survive reboot). */
+    uint8_t   pin_set;
+    uint8_t   pin_tries;          /* remaining attempts; 0 = locked            */
+    uint8_t   pin_reserved[2];
+    uint8_t   pin_salt[16];
+    uint8_t   pin_hash[32];       /* HMAC-SHA256(pin_salt, PIN)                 */
     keyslot_t slots[HSM_MAX_OBJECTS];
 } store_t;
+
+#define DEFAULT_PIN     "123456"  /* provisioned on first boot (matches Vault)  */
 
 static store_t   store __attribute__((aligned(16)));  /* RAM image, 16-aligned
                                   so each slot's GCM AAD pointer is 16-aligned */
@@ -91,6 +99,21 @@ static void derive_kek(void)
     memset(uidb, 0, sizeof(uidb));
 }
 
+static void compute_pin_hash(const uint8_t *salt, const uint8_t *pin,
+                             uint16_t pin_len, uint8_t out[32])
+{
+    HSM_HmacSha256(salt, 16, pin, pin_len, out);
+}
+
+static void provision_default_pin(void)
+{
+    HSM_Rng_Fill(store.pin_salt, sizeof(store.pin_salt));
+    compute_pin_hash(store.pin_salt, (const uint8_t *)DEFAULT_PIN,
+                     (uint16_t)(sizeof(DEFAULT_PIN) - 1), store.pin_hash);
+    store.pin_tries = HSM_PIN_MAX_TRIES;
+    store.pin_set = 1;
+}
+
 static void store_reset(void)
 {
     memset(&store, 0, sizeof(store));
@@ -98,6 +121,7 @@ static void store_reset(void)
     store.version = STORE_VERSION;
     store.next_id = 1;
     store.next_seq = 1;
+    provision_default_pin();
 }
 
 static int persist(void)
@@ -111,7 +135,35 @@ void HSM_KeyStore_Init(void)
     HSM_Flash_Read(0, &store, sizeof(store));
     if (store.magic != STORE_MAGIC || store.version != STORE_VERSION) {
         store_reset();   /* fresh / blank flash */
+        persist();
     }
+}
+
+/* Verify a PIN; manages the persistent retry counter / lockout.
+ * @return HSM_OK on success, HSM_ERR_LOCKED if no tries remain,
+ *         HSM_ERR_NOT_AUTHORIZED on a wrong PIN. *tries_left set on return. */
+uint16_t HSM_KeyStore_Auth(const uint8_t *pin, uint16_t len, uint8_t *tries_left)
+{
+    if (store.pin_tries == 0) { *tries_left = 0; return HSM_ERR_LOCKED; }
+
+    uint8_t h[32];
+    compute_pin_hash(store.pin_salt, pin, len, h);
+    /* constant-time compare */
+    uint8_t diff = 0;
+    for (int i = 0; i < 32; i++) diff |= (uint8_t)(h[i] ^ store.pin_hash[i]);
+
+    if (diff == 0) {
+        if (store.pin_tries != HSM_PIN_MAX_TRIES) {
+            store.pin_tries = HSM_PIN_MAX_TRIES;
+            persist();
+        }
+        *tries_left = store.pin_tries;
+        return HSM_OK;
+    }
+    store.pin_tries--;
+    persist();
+    *tries_left = store.pin_tries;
+    return (store.pin_tries == 0) ? HSM_ERR_LOCKED : HSM_ERR_NOT_AUTHORIZED;
 }
 
 static keyslot_t *find_slot(uint32_t id)

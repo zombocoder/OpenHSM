@@ -550,6 +550,15 @@ int main(void)
     uint8_t resp[HSM_MAX_MSG];
     int resp_len = 0;
 
+    /* ---- AUTH (default PIN); key operations are gated behind login ---- */
+    if (send_command(h, HSM_CMD_AUTH, (const uint8_t *)"123456", 6,
+                     resp, sizeof(resp), &resp_len) == 0) {
+        hsm_header_t *rh = (hsm_header_t *)resp;
+        const hsm_auth_resp_t *ar = (const hsm_auth_resp_t *)(resp + HSM_HEADER_SIZE);
+        printf("AUTH  -> status=0x%04x tries_left=%u  [%s]\n",
+               rh->status, ar->tries_left, rh->status == HSM_OK ? "OK" : "FAIL");
+    }
+
     /* ---- PING ---- */
     if (send_command(h, HSM_CMD_PING, NULL, 0, resp, sizeof(resp), &resp_len) == 0) {
         hsm_header_t *rh = (hsm_header_t *)resp;

@@ -313,19 +313,27 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
     return CKR_OK;
 }
 
-/* Login: PIN is accepted host-side for now. Real PIN verification with retry/
- * lockout is a future firmware feature (HSM_CMD_AUTH); track state so the
- * PKCS#11 flow (and Vault) works end to end. */
+/* Login: forward the PIN to the device's AUTH command, which verifies it and
+ * manages the persistent retry counter / lockout. */
 CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
               CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
-    (void)pPin; (void)ulPinLen;
     if (!g_initialized) return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
     if (userType != CKU_USER && userType != CKU_SO) return CKR_USER_TYPE_INVALID;
     if (g_logged_in) return CKR_USER_ALREADY_LOGGED_IN;
-    g_logged_in = CK_TRUE;
-    return CKR_OK;
+    if (pPin == NULL || ulPinLen == 0) return CKR_PIN_INCORRECT;
+
+    uint8_t resp[HSM_MAX_MSG]; int rl = 0;
+    if (ohsm_cmd(g_ctx, HSM_CMD_AUTH, pPin, (uint16_t)ulPinLen,
+                 resp, sizeof(resp), &rl) != 0) return CKR_DEVICE_ERROR;
+    hsm_header_t *rh = (hsm_header_t *)resp;
+    switch (rh->status) {
+    case HSM_OK:               g_logged_in = CK_TRUE; return CKR_OK;
+    case HSM_ERR_LOCKED:       return CKR_PIN_LOCKED;
+    case HSM_ERR_NOT_AUTHORIZED: return CKR_PIN_INCORRECT;
+    default:                   return CKR_FUNCTION_FAILED;
+    }
 }
 
 CK_RV C_Logout(CK_SESSION_HANDLE hSession)

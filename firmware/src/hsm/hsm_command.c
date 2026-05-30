@@ -21,6 +21,29 @@
 #define FW_VERSION_MAJOR 0u
 #define FW_VERSION_MINOR 1u
 
+/* Login state (RAM, cleared on power cycle). Sensitive key operations require
+ * a prior successful AUTH. */
+static int g_authenticated = 0;
+
+/* Commands that operate on or create key material require login. */
+static int command_needs_auth(uint16_t cmd)
+{
+    switch (cmd) {
+    case HSM_CMD_GENERATE_KEY:
+    case HSM_CMD_DELETE_OBJECT:
+    case HSM_CMD_GET_PUBLIC:
+    case HSM_CMD_HMAC:
+    case HSM_CMD_SIGN:
+    case HSM_CMD_WRAP:
+    case HSM_CMD_UNWRAP:
+    case HSM_CMD_ENCRYPT:
+    case HSM_CMD_DECRYPT:
+        return 1;
+    default:
+        return 0;   /* PING/INFO/SELFTEST/RANDOM/FIND/GET/AUTH/session: open */
+    }
+}
+
 size_t HSM_BuildResponse(uint8_t *resp, const uint8_t *req_hdr,
                          uint16_t status, uint16_t payload_len)
 {
@@ -92,7 +115,20 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
     }
 
+    if (command_needs_auth(hdr.command) && !g_authenticated) {
+        return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
+    }
+
     switch (hdr.command) {
+    case HSM_CMD_AUTH: {
+        uint8_t tries = 0;
+        uint16_t st = HSM_KeyStore_Auth(payload, hdr.payload_length, &tries);
+        g_authenticated = (st == HSM_OK);
+        hsm_auth_resp_t ar = { .authenticated = (st == HSM_OK), .tries_left = tries };
+        memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
+        return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
+    }
+
     case HSM_CMD_PING: {
         /* Echo a 4-byte magic so the host can verify a live device. */
         uint32_t magic = HSM_PING_MAGIC;

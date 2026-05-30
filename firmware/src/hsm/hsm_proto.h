@@ -83,6 +83,7 @@ typedef enum {
     HSM_ERR_INVALID_PARAM   = 0x0005,
     HSM_ERR_NOT_IMPLEMENTED = 0x0006,
     HSM_ERR_KEY_VERIFY      = 0x0007,  /* freshly stored key failed self-verify */
+    HSM_ERR_LOCKED          = 0x0008,  /* PIN retry counter exhausted           */
     HSM_ERR_INTERNAL        = 0x00FF,
 } hsm_status_t;
 
@@ -112,6 +113,17 @@ typedef struct __attribute__((packed)) {
     uint8_t eph_pub[32];      /* sender ephemeral X25519 public key             */
     uint8_t nonce[32];        /* sender 256-bit handshake nonce                 */
 } hsm_open_session_t;         /* used for both OPEN_SESSION request and response */
+
+/* ---- Authentication (PIN login) ---- */
+#define HSM_PIN_MAX_TRIES 8u
+#define HSM_PIN_MIN_LEN   4u
+#define HSM_PIN_MAX_LEN   32u
+
+/* AUTH response payload: outcome + remaining tries. */
+typedef struct __attribute__((packed)) {
+    uint8_t authenticated;  /* 1 if login now succeeded                         */
+    uint8_t tries_left;     /* remaining attempts before lockout                */
+} hsm_auth_resp_t;
 
 /* ---- Key store ----------------------------------------------------------- */
 
