@@ -28,7 +28,24 @@ firmware/
 - `cmake` ≥ 3.20, `make`
 - `dfu-util` (flashing via the STM32 system bootloader)
 
+## Dependencies
+
+The STM32CubeU5 components and Monocypher are git submodules under `vendor/`.
+Fetch them once after cloning:
+
+```sh
+git submodule update --init --recursive   # or: make deps  (from repo root)
+```
+
 ## Build
+
+From the repo root the top-level `Makefile` is the easy path:
+
+```sh
+make firmware      # configure + build (BUILD_TYPE=Release for -Os)
+```
+
+Or directly with CMake:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug

@@ -1,0 +1,15 @@
+[submodule "firmware/vendor/cmsis_core"]
+	path = firmware/vendor/cmsis_core
+	url = https://github.com/STMicroelectronics/cmsis_core.git
+[submodule "firmware/vendor/cmsis_device_u5"]
+	path = firmware/vendor/cmsis_device_u5
+	url = https://github.com/STMicroelectronics/cmsis-device-u5.git
+[submodule "firmware/vendor/stm32u5xx_hal"]
+	path = firmware/vendor/stm32u5xx_hal
+	url = https://github.com/STMicroelectronics/stm32u5xx_hal_driver.git
+[submodule "firmware/vendor/usb_device"]
+	path = firmware/vendor/usb_device
+	url = https://github.com/STMicroelectronics/stm32_mw_usb_device.git
+[submodule "firmware/vendor/monocypher"]
+	path = firmware/vendor/monocypher
+	url = https://github.com/LoupVaillant/Monocypher.git

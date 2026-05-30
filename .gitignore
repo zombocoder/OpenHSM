@@ -7,10 +7,12 @@ build/
 *.o
 *.obj
 
-# Vendored SDK (large; clone via the bootstrap script / documented commands)
-firmware/vendor/
+# Generated artifacts
+firmware/tools/gen_vectors
 
 # Editor / OS
 .DS_Store
 .cache/
 compile_commands.json
+
+# NOTE: firmware/vendor/* are git submodules (see .gitmodules), not ignored.
