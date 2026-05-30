@@ -71,6 +71,54 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
+    /* ---- Session + login + object enumeration ---- */
+    CK_SESSION_HANDLE sess;
+    rv = fl->C_OpenSession(slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                           NULL, NULL, &sess);
+    printf("C_OpenSession    rv=0x%lx handle=%lu\n", (unsigned long)rv, (unsigned long)sess);
+
+    rv = fl->C_Login(sess, CKU_USER, (CK_UTF8CHAR_PTR)"123456", 6);
+    printf("C_Login          rv=0x%lx\n", (unsigned long)rv);
+
+    rv = fl->C_FindObjectsInit(sess, NULL, 0);   /* match everything */
+    printf("C_FindObjectsInit rv=0x%lx\n", (unsigned long)rv);
+
+    CK_OBJECT_HANDLE objs[16]; CK_ULONG nobj = 0;
+    rv = fl->C_FindObjects(sess, objs, 16, &nobj);
+    printf("C_FindObjects    rv=0x%lx found=%lu\n", (unsigned long)rv, (unsigned long)nobj);
+
+    for (CK_ULONG i = 0; i < nobj; i++) {
+        CK_OBJECT_CLASS cls = 0; CK_KEY_TYPE kt = 0; CK_ULONG idv = 0;
+        char label[33] = {0};
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_CLASS,    &cls,   sizeof(cls) },
+            { CKA_KEY_TYPE, &kt,    sizeof(kt)  },
+            { CKA_ID,       &idv,   sizeof(idv) },
+            { CKA_LABEL,    label,  sizeof(label) - 1 },
+        };
+        fl->C_GetAttributeValue(sess, objs[i], tmpl, 4);
+        printf("  obj handle=%lu  class=%lu keytype=0x%lx id=%lu label=\"%s\"\n",
+               (unsigned long)objs[i], (unsigned long)cls,
+               (unsigned long)kt, (unsigned long)idv, label);
+    }
+    fl->C_FindObjectsFinal(sess);
+
+    /* Find by label (as Vault would for its seal key). */
+    CK_OBJECT_CLASS want_cls = CKO_SECRET_KEY;
+    CK_ATTRIBUTE bylabel[] = {
+        { CKA_CLASS, &want_cls, sizeof(want_cls) },
+        { CKA_LABEL, (void *)"openhsm-test-key", 16 },
+    };
+    fl->C_FindObjectsInit(sess, bylabel, 2);
+    nobj = 0;
+    fl->C_FindObjects(sess, objs, 16, &nobj);
+    fl->C_FindObjectsFinal(sess);
+    printf("Find by label \"openhsm-test-key\": %lu match%s\n",
+           (unsigned long)nobj, nobj == 1 ? "" : "es");
+
+    fl->C_Logout(sess);
+    fl->C_CloseSession(sess);
+
     fl->C_Finalize(NULL);
     printf("C_Finalize       OK\n");
     dlclose(lib);
