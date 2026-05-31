@@ -7,6 +7,7 @@
 #   make firmware   build the STM32U585 firmware (-> build/openhsm.{elf,bin,hex})
 #   make host       build the host test client (openhsm-ping)
 #   make cli        build the maintenance/debug CLI (openhsm-cli)
+#   make ssh-agent  build the SSH agent (openhsm-ssh-agent)
 #   make all        firmware + host (default)
 #   make flash      program the board over DFU (hold BOOT0, tap RESET first)
 #   make ping       run the host test client against a running board
@@ -23,11 +24,13 @@ HOST_DIR   := host/tools/openhsm-ping
 HOST_BUILD := $(HOST_DIR)/build
 CLI_DIR    := host/tools/openhsm-cli
 CLI_BUILD  := $(CLI_DIR)/build
+AGENT_DIR  := host/tools/openhsm-ssh-agent
+AGENT_BUILD := $(AGENT_DIR)/build
 
 # A sentinel file that exists only once submodules are checked out.
 DEPS_SENTINEL := $(FW_DIR)/vendor/cmsis_core/CMSIS/Core/Include/core_cm33.h
 
-.PHONY: all firmware host cli flash ping clean distclean deps help
+.PHONY: all firmware host cli ssh-agent flash ping clean distclean deps help
 
 all: firmware host
 
@@ -59,9 +62,13 @@ cli:
 	cmake -S $(CLI_DIR) -B $(CLI_BUILD)
 	cmake --build $(CLI_BUILD) -j
 
+ssh-agent:
+	cmake -S $(AGENT_DIR) -B $(AGENT_BUILD)
+	cmake --build $(AGENT_BUILD) -j
+
 # --- housekeeping -----------------------------------------------------------
 clean:
-	rm -rf $(FW_BUILD) $(HOST_BUILD) $(CLI_BUILD) $(FW_DIR)/tools/gen_vectors
+	rm -rf $(FW_BUILD) $(HOST_BUILD) $(CLI_BUILD) $(AGENT_BUILD) $(FW_DIR)/tools/gen_vectors
 
 distclean: clean
 	-git submodule deinit -f --all

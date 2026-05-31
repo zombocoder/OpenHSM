@@ -16,6 +16,8 @@ PKCS#11 / OpenSC / p11-kit consumers.
 - [host/openbao/README.md](host/openbao/README.md) — OpenBao auto-unseal demo.
 - [host/tools/openhsm-cli/README.md](host/tools/openhsm-cli/README.md) —
   maintenance/debug CLI (local USB or remote via openhsm-daemon).
+- [host/tools/openhsm-ssh-agent/README.md](host/tools/openhsm-ssh-agent/README.md) —
+  SSH agent: log in with an Ed25519 key held on the device.
 
 ## Layout
 
@@ -25,6 +27,7 @@ firmware/     STM32U585 firmware (C, STM32 HAL, CMake + arm-none-eabi)
 host/         host-side tools
   tools/openhsm-ping   libusb + libsodium smoke-test client
   tools/openhsm-cli    maintenance/debug CLI (USB or remote via daemon)
+  tools/openhsm-ssh-agent  ssh-agent backed by a device-held Ed25519 key
   daemon/              USB↔TCP bridge for remote / Kubernetes access
   pkcs11/              PKCS#11 provider + shared transport
   openbao/             OpenBao auto-unseal integration

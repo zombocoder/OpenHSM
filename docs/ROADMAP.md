@@ -22,6 +22,8 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ Audit log: append-only, monotonic counter, chained-HMAC tamper-evidence (§17, partial — see below)
 - ✅ PKCS#11 provider + OpenBao auto-unseal, incl. encrypted/PIN transport (§12-13,25)
 - ✅ Network transport (openhsm-daemon, USB↔TCP) for containers/k8s (§21,23 partial)
+- ✅ Tooling: openhsm-cli (maintenance/debug + `bench`/`storage`), openhsm-ssh-agent
+  (SSH login with a device-held Ed25519 key — verified end-to-end into a container)
 
 ---
 
