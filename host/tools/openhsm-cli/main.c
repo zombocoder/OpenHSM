@@ -33,7 +33,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sodium.h>
+
+/* Monotonic seconds, for benchmark timing. */
+static double now_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 
 static const char *g_pin = "123456";
 
@@ -399,6 +408,83 @@ static int c_setpin(ohsm_ctx *c, int ac, char **av)
     return st == HSM_OK ? 0 : 1;
 }
 
+/* Generate a throwaway key for benchmarking; returns its id (0 on failure). */
+static uint32_t bench_gen(ohsm_ctx *c, uint16_t alg, uint16_t caps, const char *label)
+{
+    hsm_genkey_req_t rq; memset(&rq, 0, sizeof(rq));
+    rq.algorithm = alg; rq.key_bits = 256; rq.capabilities = caps;
+    size_t ll = strlen(label); if (ll > HSM_LABEL_LEN) ll = HSM_LABEL_LEN;
+    memcpy(rq.label, label, ll);
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    if (cmd(c, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol) != HSM_OK)
+        return 0;
+    hsm_obj_info_t k; memcpy(&k, o, sizeof(k));
+    return k.id;
+}
+
+/* Throughput benchmark vs spec §20 targets (AES-GCM >100/s, HMAC >500/s). */
+static int c_bench(ohsm_ctx *c, int ac, char **av)
+{
+    double dur   = (ac >= 1) ? atof(av[0]) : 2.0;     /* seconds per test */
+    uint16_t plen = (ac >= 2) ? (uint16_t)atoi(av[1]) : 32; /* payload bytes */
+    if (dur <= 0) dur = 2.0;
+    if (plen == 0 || plen > 256) plen = 32;
+    if (login(c)) return 1;
+
+    uint32_t aes = bench_gen(c, HSM_KEY_AES256, HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT, "bench-aes");
+    uint32_t mac = bench_gen(c, HSM_KEY_HMAC256, HSM_CAP_SIGN, "bench-hmac");
+    if (!aes || !mac) { fprintf(stderr, "bench: key generation failed (store full?)\n"); return 1; }
+
+    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t data[256]; randombytes_buf(data, plen);
+    int rc = 0;
+
+    printf("benchmark: payload=%u B, %.1f s per test, over secure session\n", plen, dur);
+
+    /* ---- AES-256-GCM encrypt ---- */
+    unsigned long n = 0; double t0 = now_s(), el = 0;
+    do {
+        hsm_aead_req_t r = { .key_id = aes, .aad_len = 0, .data_len = plen };
+        randombytes_buf(r.nonce, 12);
+        memcpy(req, &r, sizeof(r)); memcpy(req + sizeof(r), data, plen);
+        if (cmd(c, HSM_CMD_ENCRYPT, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK) {
+            fprintf(stderr, "bench: ENCRYPT failed\n"); rc = 1; break;
+        }
+        n++; el = now_s() - t0;
+    } while (el < dur);
+    double aes_ops = n / el;
+    printf("  AES-256-GCM: %8.1f ops/s  (%.2f ms/op, n=%lu)  target >100/s  [%s]\n",
+           aes_ops, 1000.0 / aes_ops, n, aes_ops > 100.0 ? "PASS" : "FAIL");
+    if (aes_ops <= 100.0) rc = 1;
+
+    /* ---- HMAC-SHA256 ---- */
+    n = 0; t0 = now_s(); el = 0;
+    do {
+        hsm_keyop_req_t r = { .id = mac, .msg_len = plen };
+        memcpy(req, &r, sizeof(r)); memcpy(req + sizeof(r), data, plen);
+        if (cmd(c, HSM_CMD_HMAC, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK) {
+            fprintf(stderr, "bench: HMAC failed\n"); rc = 1; break;
+        }
+        n++; el = now_s() - t0;
+    } while (el < dur);
+    double mac_ops = n / el;
+    printf("  HMAC-SHA256: %8.1f ops/s  (%.2f ms/op, n=%lu)  target >500/s  [%s]\n",
+           mac_ops, 1000.0 / mac_ops, n, mac_ops > 500.0 ? "PASS" : "FAIL");
+    if (mac_ops <= 500.0) rc = 1;
+
+    /* ---- unseal proxy: one AES-GCM op is the HSM's whole per-unseal cost ---- */
+    printf("  unseal note: OpenBao unwraps its master key with ONE AES-GCM op\n"
+           "               (~%.2f ms here); the <3 s target is process-startup\n"
+           "               bound — measure end-to-end with `make -C host/openbao`.\n",
+           1000.0 / aes_ops);
+
+    /* cleanup */
+    hsm_objid_req_t d;
+    d.id = aes; cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
+    d.id = mac; cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
+    return rc;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -407,7 +493,7 @@ static int usage(void)
       "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
-      "  audit [n] | setpin <old> <new>\n"
+      "  audit [n] | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
@@ -447,6 +533,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "unwrap"))   rc = c_unwrap(c, ac, av);
     else if (!strcmp(sub, "audit"))    rc = c_audit(c, ac, av);
     else if (!strcmp(sub, "setpin"))   rc = c_setpin(c, ac, av);
+    else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
     else { ohsm_close(c); return usage(); }
 
     ohsm_close(c);
