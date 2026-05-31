@@ -57,6 +57,7 @@ typedef enum {
     HSM_CMD_AUTH            = 0x0012,
     HSM_CMD_SESSION_DATA    = 0x0013,  /* outer command for an encrypted envelope */
     HSM_CMD_SET_PIN         = 0x0014,  /* change the login PIN (old -> new)     */
+    HSM_CMD_INIT_PIN        = 0x0015,  /* set the first PIN on an unprovisioned device */
     HSM_CMD_GENERATE_KEY    = 0x0020,
     HSM_CMD_IMPORT_WRAPPED  = 0x0021,
     HSM_CMD_EXPORT_WRAPPED  = 0x0022,
@@ -95,9 +96,12 @@ typedef struct __attribute__((packed)) {
     uint16_t proto_version;   /* HSM_PROTO_VERSION                              */
     uint16_t fw_version;      /* firmware version, BCD-ish (major<<8 | minor)   */
     uint8_t  serial[12];      /* STM32 96-bit unique device ID                  */
-    uint8_t  flags;           /* bit0: secure-session supported (0 in M1)       */
+    uint8_t  flags;           /* HSM_INFO_* bits                                */
     uint8_t  reserved[3];
 } hsm_info_t;
+
+/* hsm_info_t.flags bits. */
+#define HSM_INFO_PIN_SET   0x02u   /* a user PIN has been provisioned (else INIT_PIN needed) */
 
 /* ---- Secure session (X25519 ECDH -> HKDF-SHA256 -> AES-256-GCM) ---------- *
  * Handshake is unauthenticated ECDH for now (transport confidentiality +

@@ -23,11 +23,15 @@ size_t HSM_ProcessPacket(const uint8_t *req, size_t req_len,
 
 /**
  * @brief Process a plaintext (already-decrypted) command packet.
- *        Used directly for unauthenticated commands and by the session layer
- *        for the inner command of an encrypted envelope.
+ *        Used directly for plaintext commands and by the session layer for the
+ *        inner command of an encrypted envelope.
+ * @param auth  Pointer to the caller's login flag — per-session for an encrypted
+ *              envelope, or a process-global flag for the plaintext path. AUTH
+ *              sets it; gated commands require it. Binding it to the session
+ *              means a login on one session does not unlock another.
  */
 size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
-                            uint8_t *resp, size_t resp_cap);
+                            uint8_t *resp, size_t resp_cap, int *auth);
 
 /** @brief Build a response header in @p resp; returns total packet length. */
 size_t HSM_BuildResponse(uint8_t *resp, const uint8_t *req_hdr,

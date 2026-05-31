@@ -509,6 +509,18 @@ static int c_bench(ohsm_ctx *c, int ac, char **av)
     return rc;
 }
 
+static int c_initpin(ohsm_ctx *c, int ac, char **av)
+{
+    if (ac < 1) { fprintf(stderr, "usage: initpin <pin>\n"); return 2; }
+    uint8_t resp[HSM_MAX_MSG]; int ol;
+    uint16_t st = cmd(c, HSM_CMD_INIT_PIN, (const uint8_t *)av[0], (uint16_t)strlen(av[0]),
+                      resp, sizeof(resp), NULL, &ol);
+    printf("initpin: %s\n", status_str(st));
+    if (st == HSM_ERR_INVALID_PARAM)
+        fprintf(stderr, "  (device already provisioned — use setpin to change)\n");
+    return st == HSM_OK ? 0 : 1;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -517,7 +529,7 @@ static int usage(void)
       "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
-      "  audit [n|all] | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
+      "  audit [n|all] | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
@@ -556,6 +568,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "wrap"))     rc = c_wrap(c, ac, av);
     else if (!strcmp(sub, "unwrap"))   rc = c_unwrap(c, ac, av);
     else if (!strcmp(sub, "audit"))    rc = c_audit(c, ac, av);
+    else if (!strcmp(sub, "initpin"))  rc = c_initpin(c, ac, av);
     else if (!strcmp(sub, "setpin"))   rc = c_setpin(c, ac, av);
     else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
     else { ohsm_close(c); return usage(); }

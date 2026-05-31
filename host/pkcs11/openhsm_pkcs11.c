@@ -170,7 +170,11 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
         snprintf(serial + i * 2, 3, "%02X", g_info.serial[i]);
     pad_set(pInfo->serialNumber, sizeof(pInfo->serialNumber), serial);
 
-    pInfo->flags = CKF_TOKEN_INITIALIZED | CKF_RNG | CKF_LOGIN_REQUIRED;
+    /* Reflect provisioning state: a device with no PIN yet is not "initialized"
+     * and needs C_InitPIN before login. */
+    int pin_set = g_have_info && (g_info.flags & HSM_INFO_PIN_SET);
+    pInfo->flags = CKF_RNG | CKF_LOGIN_REQUIRED
+                 | (pin_set ? (CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED) : 0);
     pInfo->ulMaxSessionCount = CK_EFFECTIVELY_INFINITE;
     pInfo->ulSessionCount = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulMaxRwSessionCount = CK_EFFECTIVELY_INFINITE;
@@ -1158,8 +1162,21 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
 
 CK_RV C_InitToken(CK_SLOT_ID a, CK_UTF8CHAR_PTR b, CK_ULONG c, CK_UTF8CHAR_PTR d)
 { (void)a;(void)b;(void)c;(void)d; NS; }
-CK_RV C_InitPIN(CK_SESSION_HANDLE a, CK_UTF8CHAR_PTR b, CK_ULONG c)
-{ (void)a;(void)b;(void)c; NS; }
+CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
+{
+    if (!g_initialized) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pPin == NULL || ulPinLen == 0) return CKR_PIN_LEN_RANGE;
+    uint8_t resp[HSM_MAX_MSG]; int rl = 0;
+    if (locked_cmd(HSM_CMD_INIT_PIN, pPin, (uint16_t)ulPinLen, resp, sizeof(resp), &rl) != 0)
+        return CKR_DEVICE_ERROR;
+    hsm_header_t *rh = (hsm_header_t *)resp;
+    switch (rh->status) {
+    case HSM_OK:                 g_have_info = CK_FALSE; return CKR_OK;  /* refresh flags */
+    case HSM_ERR_INVALID_PARAM:  return CKR_PIN_LEN_RANGE;  /* bad length or already set */
+    default:                     return CKR_FUNCTION_FAILED;
+    }
+}
 CK_RV C_GetOperationState(CK_SESSION_HANDLE a, CK_BYTE_PTR b, CK_ULONG_PTR c)
 { (void)a;(void)b;(void)c; NS; }
 CK_RV C_SetOperationState(CK_SESSION_HANDLE a, CK_BYTE_PTR b, CK_ULONG c, CK_OBJECT_HANDLE d, CK_OBJECT_HANDLE e)

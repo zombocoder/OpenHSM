@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 9u  /* HSM_MAX_OBJECTS 8 -> 32 (store layout changed) */
+#define STORE_VERSION 10u  /* ship unprovisioned: no default PIN (pin_set=0) */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -75,7 +75,6 @@ typedef struct __attribute__((packed)) {
     keyslot_t slots[HSM_MAX_OBJECTS];
 } store_t;
 
-#define DEFAULT_PIN     "123456"  /* provisioned on first boot (matches Vault)  */
 
 static store_t   store __attribute__((aligned(16)));  /* RAM image, 16-aligned
                                   so each slot's GCM AAD pointer is 16-aligned */
@@ -106,23 +105,15 @@ static void compute_pin_hash(const uint8_t *salt, const uint8_t *pin,
     HSM_HmacSha256(salt, 16, pin, pin_len, out);
 }
 
-static void provision_default_pin(void)
-{
-    HSM_Rng_Fill(store.pin_salt, sizeof(store.pin_salt));
-    compute_pin_hash(store.pin_salt, (const uint8_t *)DEFAULT_PIN,
-                     (uint16_t)(sizeof(DEFAULT_PIN) - 1), store.pin_hash);
-    store.pin_tries = HSM_PIN_MAX_TRIES;
-    store.pin_set = 1;
-}
-
 static void store_reset(void)
 {
+    /* Ship UNPROVISIONED: pin_set stays 0 → the device is locked (no AUTH
+     * possible) until HSM_KeyStore_InitPin sets the first PIN. */
     memset(&store, 0, sizeof(store));
     store.magic   = STORE_MAGIC;
     store.version = STORE_VERSION;
     store.next_id = 1;
     store.next_seq = 1;
-    provision_default_pin();
 }
 
 static int persist(void)
@@ -145,6 +136,7 @@ void HSM_KeyStore_Init(void)
  *         HSM_ERR_NOT_AUTHORIZED on a wrong PIN. *tries_left set on return. */
 uint16_t HSM_KeyStore_Auth(const uint8_t *pin, uint16_t len, uint8_t *tries_left)
 {
+    if (!store.pin_set) { *tries_left = 0; return HSM_ERR_NOT_AUTHORIZED; }  /* unprovisioned */
     if (store.pin_tries == 0) { *tries_left = 0; return HSM_ERR_LOCKED; }
 
     uint8_t h[32];
@@ -195,6 +187,26 @@ uint16_t HSM_KeyStore_SetPin(const uint8_t *old_pin, uint16_t old_len,
     store.pin_tries = HSM_PIN_MAX_TRIES;
     persist();
     *tries_left = store.pin_tries;
+    return HSM_OK;
+}
+
+uint8_t HSM_KeyStore_PinIsSet(void)
+{
+    return store.pin_set;
+}
+
+uint16_t HSM_KeyStore_InitPin(const uint8_t *pin, uint16_t len, uint8_t *tries_left)
+{
+    if (tries_left) *tries_left = store.pin_tries;
+    if (store.pin_set) return HSM_ERR_INVALID_PARAM;   /* already provisioned */
+    if (len < HSM_PIN_MIN_LEN || len > HSM_PIN_MAX_LEN) return HSM_ERR_INVALID_PARAM;
+
+    HSM_Rng_Fill(store.pin_salt, sizeof(store.pin_salt));
+    compute_pin_hash(store.pin_salt, pin, len, store.pin_hash);
+    store.pin_tries = HSM_PIN_MAX_TRIES;
+    store.pin_set   = 1;
+    if (persist() != 0) return HSM_ERR_INTERNAL;
+    if (tries_left) *tries_left = store.pin_tries;
     return HSM_OK;
 }
 

@@ -27,6 +27,13 @@ uint16_t HSM_KeyStore_SetPin(const uint8_t *old_pin, uint16_t old_len,
                              const uint8_t *new_pin, uint16_t new_len,
                              uint8_t *tries_left);
 
+/** @brief Set the first PIN on an unprovisioned device (no old PIN needed).
+ *  @return HSM_OK, or HSM_ERR_INVALID_PARAM if already provisioned / bad length. */
+uint16_t HSM_KeyStore_InitPin(const uint8_t *pin, uint16_t len, uint8_t *tries_left);
+
+/** @brief Non-zero if a user PIN has been provisioned. */
+uint8_t HSM_KeyStore_PinIsSet(void);
+
 /** @brief Reserve a block of audit sequence numbers (persisted). @return base. */
 uint32_t HSM_KeyStore_ReserveAudit(uint32_t count);
 

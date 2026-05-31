@@ -37,6 +37,7 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 | `wrap <wrapid> <targetid>` | wrapped export (blob hex) |
 | `unwrap <wrapid> <label> <blobhex>` | import a wrap blob |
 | `audit [n]` | recent audit-log entries |
+| `initpin <pin>` | set the first PIN on a fresh (unprovisioned) device |
 | `setpin <old> <new>` | change the login PIN |
 | `bench [seconds] [payload]` | throughput benchmark (AES-GCM, HMAC) vs spec §20 targets |
 

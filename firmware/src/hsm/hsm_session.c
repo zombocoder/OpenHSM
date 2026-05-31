@@ -29,6 +29,7 @@ static const char HKDF_INFO[] = "OpenHSM/v1 session keys";
 
 typedef struct {
     uint8_t  valid;
+    int      authenticated;  /* per-session login state (set by AUTH in-session) */
     uint32_t session_id;
     uint8_t  k_c2d[32];
     uint8_t  k_d2c[32];
@@ -143,6 +144,7 @@ size_t HSM_Session_Open(const uint8_t *req, size_t req_len,
     s->rx_counter = 0;
     s->tx_counter = 1;
     s->valid = 1;
+    s->authenticated = 0;   /* fresh session starts logged-out */
 
     /* Wipe transient secrets. */
     secure_zero(eph_priv, sizeof(eph_priv));
@@ -220,7 +222,8 @@ size_t HSM_Session_Unwrap(const uint8_t *req, size_t req_len,
     if (inner_cap > resp_cap - HSM_HEADER_SIZE - HSM_GCM_TAG_LEN) {
         inner_cap = resp_cap - HSM_HEADER_SIZE - HSM_GCM_TAG_LEN;
     }
-    size_t inner_len = HSM_ProcessPlaintext(inner_plain, ct_len, inner_resp, inner_cap);
+    size_t inner_len = HSM_ProcessPlaintext(inner_plain, ct_len, inner_resp, inner_cap,
+                                            &s->authenticated);
     if (inner_len == 0) {
         return HSM_BuildResponse(resp, req, HSM_ERR_INTERNAL, 0);
     }

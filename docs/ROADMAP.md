@@ -18,7 +18,7 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ Crypto: AES-256-GCM (HW), SHA-256/HMAC/HKDF (sw), Ed25519/X25519, TRNG, KAT self-test (§11)
 - ✅ Encrypted key store in flash, HUK→KEK→objects, wrapped-export-only (§9-10)
 - ✅ Key ops: GENERATE/FIND/GET/DELETE, SIGN, HMAC, GET_PUBLIC, WRAP/UNWRAP, ENCRYPT/DECRYPT (§11,15)
-- ✅ PIN auth: login, retry counter, persistent lockout, SET_PIN (§16)
+- ✅ PIN auth: ships unprovisioned (C_InitPIN), per-session login binding, retry counter, lockout, SET_PIN (§16)
 - ✅ Audit log: append-only, monotonic counter, chained-HMAC tamper-evidence, durable in flash (§17)
 - ✅ PKCS#11 provider + OpenBao auto-unseal, incl. encrypted/PIN transport (§12-13,25)
 - ✅ Network transport (openhsm-daemon, USB↔TCP) for containers/k8s (§21,23 partial)
@@ -82,10 +82,21 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ⬜ **Monotonic anti-replay counters** hardened against power-loss races.
 
 ### F. Authentication completeness (§16)
-- ⬜ **C_InitPIN / "no PIN until provisioned"**: ship with no default PIN, require
-  first-use provisioning (today `123456` is baked in).
-- ⬜ **Per-session login binding**: auth is global per power cycle; bind it to the
-  secure session and clear on close/timeout.
+- ✅ **C_InitPIN / "no PIN until provisioned"**: the device now ships
+  UNPROVISIONED (fresh store has `pin_set=0`, no default PIN) — AUTH and every
+  gated command are refused until `INIT_PIN` (0x0015) sets the first PIN (no old
+  PIN needed; rejected once provisioned). `GET_INFO` reports `HSM_INFO_PIN_SET`;
+  PKCS#11 `C_InitPIN` is wired and `C_GetTokenInfo` clears
+  `CKF_TOKEN_INITIALIZED|CKF_USER_PIN_INITIALIZED` until provisioned (0x40d after).
+  `openhsm-cli initpin <pin>`. Verified on hardware end-to-end.
+- ✅ **Per-session login binding**: AUTH is now bound to the secure session
+  (`session_t.authenticated`), not a power-cycle-global flag — a login on one
+  session never unlocks another, and closing a session drops its login.
+  `HSM_ProcessPlaintext` takes an `int *auth` (the session's flag, or a separate
+  global for the legacy plaintext path). Verified on hardware: a fresh session
+  is denied gated ops until it AUTHs, and a new session after a logged-in one
+  closed is still denied (no leak). No client changes (they already AUTH
+  in-session). Remaining: explicit device-side C_Logout, idle timeout.
 - ⬜ Optional: challenge-response / hardware admin token.
 - ⬜ Authenticated session handshake (device cert) — depends on D.
 

@@ -22,9 +22,10 @@
 #define FW_VERSION_MAJOR 0u
 #define FW_VERSION_MINOR 1u
 
-/* Login state (RAM, cleared on power cycle). Sensitive key operations require
- * a prior successful AUTH. */
-static int g_authenticated = 0;
+/* Login state for the PLAINTEXT path only (no secure session to bind to).
+ * Encrypted-session logins are bound to the session (see session_t.authenticated),
+ * so a login on one session never unlocks another. */
+static int g_plaintext_auth = 0;
 
 /* Commands that operate on or create key material require login. */
 static int command_needs_auth(uint16_t cmd)
@@ -96,12 +97,12 @@ size_t HSM_ProcessPacket(const uint8_t *req, size_t req_len,
     case HSM_CMD_CLOSE_SESSION:
         return HSM_Session_Close(req, req_len, resp, resp_cap);
     default:
-        return HSM_ProcessPlaintext(req, req_len, resp, resp_cap);
+        return HSM_ProcessPlaintext(req, req_len, resp, resp_cap, &g_plaintext_auth);
     }
 }
 
 size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
-                            uint8_t *resp, size_t resp_cap)
+                            uint8_t *resp, size_t resp_cap, int *auth)
 {
     if (req_len < HSM_HEADER_SIZE || resp_cap < HSM_HEADER_SIZE) {
         return 0; /* too short to be a packet, or output buffer too small */
@@ -116,7 +117,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
     }
 
-    if (command_needs_auth(hdr.command) && !g_authenticated) {
+    if (command_needs_auth(hdr.command) && !*auth) {
         return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
     }
 
@@ -124,8 +125,18 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
     case HSM_CMD_AUTH: {
         uint8_t tries = 0;
         uint16_t st = HSM_KeyStore_Auth(payload, hdr.payload_length, &tries);
-        g_authenticated = (st == HSM_OK);
+        *auth = (st == HSM_OK);
         HSM_Audit_Log(st == HSM_OK ? HSM_EV_AUTH_OK : HSM_EV_AUTH_FAIL, tries);
+        hsm_auth_resp_t ar = { .authenticated = (st == HSM_OK), .tries_left = tries };
+        memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
+        return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
+    }
+
+    case HSM_CMD_INIT_PIN: {
+        /* First-use provisioning on an unprovisioned device (no old PIN). */
+        uint8_t tries = 0;
+        uint16_t st = HSM_KeyStore_InitPin(payload, hdr.payload_length, &tries);
+        if (st == HSM_OK) HSM_Audit_Log(HSM_EV_SET_PIN, 0);
         hsm_auth_resp_t ar = { .authenticated = (st == HSM_OK), .tries_left = tries };
         memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
         return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
@@ -163,7 +174,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         info.proto_version = HSM_PROTO_VERSION;
         info.fw_version    = (FW_VERSION_MAJOR << 8) | FW_VERSION_MINOR;
         read_uid(info.serial);
-        info.flags = 0u; /* secure session not yet supported */
+        info.flags = HSM_KeyStore_PinIsSet() ? HSM_INFO_PIN_SET : 0u;
         memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
     }

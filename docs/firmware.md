@@ -88,6 +88,7 @@ not the USB ISR.
 | 0x0012 | AUTH               | no   | PIN login (retry counter / lockout) |
 | 0x0013 | SESSION_DATA       | no   | outer cmd for an encrypted envelope |
 | 0x0014 | SET_PIN            | no¹  | change PIN (old verified inside) |
+| 0x0015 | INIT_PIN           | no   | set first PIN on an unprovisioned device |
 | 0x0020 | GENERATE_KEY       | yes  | random key → encrypted object |
 | 0x0023 | FIND_OBJECT        | no   | list object metadata (optional label) |
 | 0x0024 | DELETE_OBJECT      | yes  | zeroize slot |
@@ -201,17 +202,22 @@ TrustZone + a provisioned device secret (ROADMAP §22).
 ## 8. Authentication & audit
 
 - **PIN:** stored as `HMAC-SHA256(salt, PIN)` in the store header with a
-  persistent retry counter (`HSM_PIN_MAX_TRIES`=8) and lockout. Default PIN
-  `123456` is provisioned on first init; `SET_PIN` changes it (verifies old,
-  fresh salt, resets the counter). Key-material commands are gated behind a
-  successful AUTH (login state is global per power cycle — per-session binding
-  is a ROADMAP item).
-- **Audit log:** append-only RAM ring (64 entries); each entry has a monotonic
-  seq (durable across reboots via block reservation in flash — ~1 write per 256
-  events) and an 8-byte HMAC chained over the previous entry (key = HKDF(KEK)),
-  giving tamper-evidence. Events: BOOT, AUTH_OK/FAIL, KEYGEN, KEYDEL, SIGN, HMAC,
-  WRAP, UNWRAP, ENCRYPT, DECRYPT, SET_PIN. Full durable entry storage is a
-  ROADMAP item (only the counter is persisted today).
+  persistent retry counter (`HSM_PIN_MAX_TRIES`=8) and lockout. The device ships
+  **unprovisioned** (no default PIN): AUTH and all gated commands are refused
+  until `INIT_PIN` sets the first PIN (rejected once provisioned). `SET_PIN`
+  changes it later (verifies old, fresh salt, resets the counter). Login state is
+  **bound to the secure session** (`session_t.authenticated`) — a login on one
+  session never unlocks another, and closing a session drops its login.
+  `GET_INFO` advertises `HSM_INFO_PIN_SET` so hosts can tell an unprovisioned
+  device (PKCS#11 clears `CKF_TOKEN_INITIALIZED`/`CKF_USER_PIN_INITIALIZED`).
+- **Audit log:** append-only, **durable in a 2-page flash ring** (pages 125-126,
+  up to 1024 × 16-byte entries) — entries are appended one quad-word at a time
+  and a page is erased only when reused, so a rolling window of the most recent
+  ~512-1024 events survives reboots. Each entry has a monotonic seq and an 8-byte
+  HMAC chained over the previous entry (key = HKDF(KEK)) for tamper-evidence.
+  Events: BOOT, AUTH_OK/FAIL, KEYGEN, KEYDEL, SIGN, HMAC, WRAP, UNWRAP, ENCRYPT,
+  DECRYPT, SET_PIN. `GET_AUDIT_LOG` is paginated (reads from flash, oldest-first).
+  Older history beyond the ring rolls off; the monotonic seq makes that evident.
 
 ---
 
