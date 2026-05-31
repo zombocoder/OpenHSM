@@ -54,6 +54,12 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   monotonic counters in Secure; USB/parsing/buffers in Non-secure; NSC veneers.
 - ⚠️ Requires setting `TZEN` option byte (hard to undo) and a two-image build.
 - This is what makes the KEK actually confidential (closes the §6/§10 caveat).
+- **DEFERRED (2026-05-31):** not safe on the current single, DFU-only board (no
+  debugger). Enabling `TZEN` boots Secure-first; any SAU/GTZC/secure-vector
+  misconfig faults at boot with no debugger to diagnose, and reverting `TZEN`
+  is an RDP regression that **mass-erases** flash (store + keys) on every failed
+  iteration. Do this on a sacrificial board with SWD attached, or once a
+  debugger is available.
 
 ### C. Tamper protection (§18)
 - ⬜ Hardware: TAMP pins, voltage/clock anomaly detection, brownout (PVD), backup-
