@@ -55,17 +55,46 @@ static void rollback_bump(uint32_t version)
 
 static uint8_t g_msg[8 + VERIFY_MAX];
 
+/* Blue "boot activity" LED — factory part C131 on the board (PC13). Change here
+ * if your board wires the user LED elsewhere. */
+#define BLUE_GPIO       GPIOC
+#define BLUE_PIN        13u
+#define BLUE_CLK_EN()   do { RCC->AHB2ENR1 |= RCC_AHB2ENR1_GPIOCEN; (void)RCC->AHB2ENR1; } while (0)
+
 static void delay(volatile uint32_t n) { while (n--) { __asm volatile("nop"); } }
 
-/* Blink PA1 forever (direct registers; the LED on this board is PA1). */
+/* Run sysclk from HSI16 (16 MHz) instead of the 4 MHz MSI reset clock so the
+ * signature check finishes ~4x faster. Flash latency is over-provisioned first
+ * (safe at any voltage range); the app reconfigures clocks fully on entry. */
+static void clock_hsi16(void)
+{
+    FLASH->ACR = (FLASH->ACR & ~0xFu) | 0x3u;   /* 3 wait states (safe for 16 MHz) */
+    (void)FLASH->ACR;
+    RCC->CR |= RCC_CR_HSION;
+    while (!(RCC->CR & RCC_CR_HSIRDY)) { }
+    RCC->CFGR1 = (RCC->CFGR1 & ~RCC_CFGR1_SW) | RCC_CFGR1_SW_0;  /* SW=01: HSI16 */
+    while ((RCC->CFGR1 & RCC_CFGR1_SWS) != RCC_CFGR1_SWS_0) { }
+    __DSB(); __ISB();
+}
+
+static void blue_init(void)
+{
+    BLUE_CLK_EN();
+    BLUE_GPIO->MODER = (BLUE_GPIO->MODER & ~(3u << (BLUE_PIN * 2))) | (1u << (BLUE_PIN * 2)); /* output */
+}
+static void blue_toggle(void) { BLUE_GPIO->ODR ^= (1u << BLUE_PIN); }
+static void blue_release(void)   /* back to analog/high-Z so the LED is off in the app */
+{
+    BLUE_GPIO->MODER |= (3u << (BLUE_PIN * 2));
+}
+
+/* Blink the blue LED forever — verification failed; recovery is BOOT0 + DFU. */
 static void fail_halt(void)
 {
-    RCC->AHB2ENR1 |= RCC_AHB2ENR1_GPIOAEN;
-    (void)RCC->AHB2ENR1;                       /* sync */
-    GPIOA->MODER = (GPIOA->MODER & ~(3u << (1u * 2))) | (1u << (1u * 2)); /* PA1 = output */
+    blue_init();
     for (;;) {
-        GPIOA->ODR ^= (1u << 1);
-        delay(300000);                         /* ~fast blink at 4 MHz */
+        blue_toggle();
+        delay(300000);                         /* fast continuous blink */
     }
 }
 
@@ -94,6 +123,14 @@ int main(void)
     const img_header_t *h   = (const img_header_t *)BOOT_HEADER_ADDR;
     const uint8_t      *app = (const uint8_t *)BOOT_APP_ADDR;
 
+    clock_hsi16();                               /* 4 MHz -> 16 MHz for a fast verify */
+
+    /* "Booting / verifying" — blink the blue LED briefly, then hold it on
+     * through the (blocking) signature check. */
+    blue_init();
+    for (int i = 0; i < 8; i++) { blue_toggle(); delay(300000); }  /* ~0.9 s @16 MHz */
+    BLUE_GPIO->ODR |= (1u << BLUE_PIN);          /* solid during verify */
+
     if (h->magic != IMG_MAGIC) fail_halt();
     if (h->img_len == 0 || h->img_len > VERIFY_MAX) fail_halt();
     if (h->version < rollback_min()) fail_halt();   /* anti-rollback */
@@ -112,6 +149,7 @@ int main(void)
     if (h->version > rollback_min())             /* monotonic high-water bump */
         rollback_bump(h->version);
 
+    blue_release();                              /* LED off; app drives its own heartbeat */
     jump_to_app(BOOT_APP_ADDR);
     return 0;                                    /* unreachable */
 }

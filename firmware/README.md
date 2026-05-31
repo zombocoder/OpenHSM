@@ -87,9 +87,12 @@ Build the host signing tool once: `cc tools/sign_image.c -lsodium -o tools/sign_
 3. With BOOT0 back to low, the bootloader verifies + runs the app, which
    enumerates as `0483:5750 OpenHSM Token`.
 
-> Recovery: a bad/incompatible image just makes the bootloader halt (PA1 blinks);
-> re-enter BOOT0+DFU and flash a good `openhsm_signed.bin`. No option bytes are
-> touched, so the board cannot be bricked here.
+> Boot indicator: the bootloader blinks the **blue user LED (PC13)** while it runs
+> (~1 s blink, then solid during the signature check), then releases it so the app's
+> red PA1 heartbeat takes over. A **continuous blue blink** means verification failed
+> — re-enter BOOT0+DFU and flash a good `openhsm_signed.bin`. No option bytes are
+> touched, so the board cannot be bricked here. (The bootloader runs sysclk at HSI16
+> for a fast verify; a short delay after a DFU `:leave` is just macOS re-enumerating USB.)
 
 ## Test the round-trip
 
