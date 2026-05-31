@@ -81,11 +81,16 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ `C_DestroyObject` (maps to device DELETE; bad handle → `CKR_OBJECT_HANDLE_INVALID`),
   `C_VerifyInit`/`C_Verify` (HMAC recompute + constant-time compare; EdDSA via
   local libsodium public-key check). Init/NULL-arg guards added across crypto ops.
-- 🟡 **NULL-safety**: implemented slots guard init/args; remaining unimplemented
-  `CK_FUNCTION_LIST` slots are NULL (most consumers tolerate this, but stubs
-  returning `CKR_FUNCTION_NOT_SUPPORTED` would be safer).
-- ⬜ Multi-part crypto (`*Update`/`*Final`), `C_WrapKey`/`C_UnwrapKey`,
-  fuller `C_GetAttributeValue`.
+- ✅ **NULL-safety**: every one of the 68 `CK_FUNCTION_LIST` slots is now wired —
+  unimplemented ones are explicit stubs returning `CKR_FUNCTION_NOT_SUPPORTED`
+  (legacy `C_GetFunctionStatus`/`C_CancelFunction` → `CKR_FUNCTION_NOT_PARALLEL`),
+  so a consumer can never jump through a NULL pointer. Init/NULL-arg guards on ops.
+- ✅ **Multi-part crypto** (`*Update`/`*Final` for Encrypt/Decrypt/Sign/Verify):
+  the device is single-shot, so parts accumulate host-side and one command is
+  issued at `*Final` (verified multi-part == single-shot). `C_WrapKey`/`C_UnwrapKey`
+  map to device WRAP/UNWRAP.
+- ⬜ Fuller `C_GetAttributeValue` (e.g. `CKA_EC_POINT` for public keys); true
+  streaming multi-part beyond one device message; `C_DeriveKey` (X25519 ECDH).
 
 ### H. Reliability & quality
 - ⬜ **Watchdog** (IWDG) + safe recovery; brownout reset handling.
