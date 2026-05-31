@@ -240,6 +240,7 @@ static uint16_t key_len_for(uint16_t algorithm)
     case HSM_KEY_HMAC256:
     case HSM_KEY_ED25519:
     case HSM_KEY_X25519:
+    case HSM_KEY_ECDSA_P256:
         return 32;
     default:
         return 0;

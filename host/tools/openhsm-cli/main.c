@@ -107,6 +107,7 @@ static int key_alg(const char *t)
     if (!strcmp(t, "hmac")) return HSM_KEY_HMAC256;
     if (!strcmp(t, "ed25519")) return HSM_KEY_ED25519;
     if (!strcmp(t, "x25519")) return HSM_KEY_X25519;
+    if (!strcmp(t, "ecdsa") || !strcmp(t, "ecdsa256")) return HSM_KEY_ECDSA_P256;
     return -1;
 }
 static const char *alg_name(uint16_t a)
@@ -114,6 +115,7 @@ static const char *alg_name(uint16_t a)
     switch (a) {
     case HSM_KEY_AES256: return "aes256"; case HSM_KEY_HMAC256: return "hmac256";
     case HSM_KEY_ED25519: return "ed25519"; case HSM_KEY_X25519: return "x25519";
+    case HSM_KEY_ECDSA_P256: return "ecdsa-p256";
     default: return "?";
     }
 }
@@ -176,10 +178,10 @@ static int c_selftest(ohsm_ctx *c, int ac, char **av)
     uint16_t st = cmd(c, HSM_CMD_SELFTEST, NULL, 0, resp, sizeof(resp), &o, &ol);
     if (st != HSM_OK) { fprintf(stderr, "selftest: %s\n", status_str(st)); return 1; }
     hsm_selftest_t t; memcpy(&t, o, sizeof(t));
-    printf("sha256=%s hmac=%s hkdf=%s gcm-enc=%s gcm-dec=%s x25519=%s x25519-pub=%s  [%s]\n",
+    printf("sha256=%s hmac=%s hkdf=%s gcm-enc=%s gcm-dec=%s x25519=%s x25519-pub=%s ecdsa=%s  [%s]\n",
            t.sha256?"FAIL":"ok", t.hmac?"FAIL":"ok", t.hkdf?"FAIL":"ok",
            t.aesgcm_enc?"FAIL":"ok", t.aesgcm_dec?"FAIL":"ok", t.x25519?"FAIL":"ok",
-           t.x25519_pub?"FAIL":"ok", t.overall?"FAILED":"ALL PASS");
+           t.x25519_pub?"FAIL":"ok", t.ecdsa_p256?"FAIL":"ok", t.overall?"FAILED":"ALL PASS");
     return t.overall ? 1 : 0;
 }
 static int c_random(ohsm_ctx *c, int ac, char **av)

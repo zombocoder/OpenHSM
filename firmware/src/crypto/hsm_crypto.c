@@ -10,6 +10,7 @@
 #include "hsm_hash.h"
 #include "hsm_aead.h"
 #include "hsm_x25519.h"
+#include "hsm_ecdsa_p256.h"
 #include "stm32u5xx_hal.h"
 #include "selftest_vectors.h"
 
@@ -109,6 +110,32 @@ static int test_x25519_pub(void)
     return eq(pub, kat_x25519_pub_a, sizeof(pub));
 }
 
+/* NIST P-256 example keypair (RFC 6979 A.2.5): private scalar d -> public X,Y.
+ * The pubkey derivation is deterministic, so it's a true known-answer test of
+ * the PKA path; we then sign + verify a fixed digest to exercise sign/verify. */
+static const uint8_t kat_ec_d[32] = {
+    0xc9,0xaf,0xa9,0xd8,0x45,0xba,0x75,0x16,0x6b,0x5c,0x21,0x57,0x67,0xb1,0xd6,0x93,
+    0x4e,0x50,0xc3,0xdb,0x36,0xe8,0x9b,0x12,0x7b,0x8a,0x62,0x2b,0x12,0x0f,0x67,0x21 };
+static const uint8_t kat_ec_qx[32] = {
+    0x60,0xfe,0xd4,0xba,0x25,0x5a,0x9d,0x31,0xc9,0x61,0xeb,0x74,0xc6,0x35,0x6d,0x68,
+    0xc0,0x49,0xb8,0x92,0x3b,0x61,0xfa,0x6c,0xe6,0x69,0x62,0x2e,0x60,0xf2,0x9f,0xb6 };
+static const uint8_t kat_ec_qy[32] = {
+    0x79,0x03,0xfe,0x10,0x08,0xb8,0xbc,0x99,0xa4,0x1a,0xe9,0xe9,0x56,0x28,0xbc,0x64,
+    0xf2,0xf1,0xb2,0x0c,0x2d,0x7e,0x9f,0x51,0x77,0xa3,0xc2,0x94,0xd4,0x46,0x22,0x99 };
+
+static int test_ecdsa_p256(void)
+{
+    uint8_t pub[64];
+    if (HSM_EcdsaP256_Public(kat_ec_d, pub) != 0) return 1;
+    if (eq(pub, kat_ec_qx, 32) || eq(pub + 32, kat_ec_qy, 32)) return 1;  /* deterministic KAT */
+
+    uint8_t digest[32];
+    for (int i = 0; i < 32; i++) digest[i] = (uint8_t)(0xA0 + i);
+    uint8_t sig[64];
+    if (HSM_EcdsaP256_Sign(kat_ec_d, digest, sig) != 0) return 1;
+    return HSM_EcdsaP256_Verify(pub, digest, sig) == 0 ? 0 : 1;          /* sign->verify */
+}
+
 int HSM_Crypto_SelfTest(hsm_selftest_t *out)
 {
     out->sha256     = (uint8_t)test_sha256();
@@ -118,8 +145,9 @@ int HSM_Crypto_SelfTest(hsm_selftest_t *out)
     out->aesgcm_dec = (uint8_t)test_aesgcm_dec();
     out->x25519     = (uint8_t)test_x25519_shared();
     out->x25519_pub = (uint8_t)test_x25519_pub();
+    out->ecdsa_p256 = (uint8_t)test_ecdsa_p256();
     out->overall = (uint8_t)(out->sha256 | out->hmac | out->hkdf |
                              out->aesgcm_enc | out->aesgcm_dec |
-                             out->x25519 | out->x25519_pub);
+                             out->x25519 | out->x25519_pub | out->ecdsa_p256);
     return out->overall == 0 ? 0 : -1;
 }

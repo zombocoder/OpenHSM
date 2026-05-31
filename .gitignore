@@ -9,6 +9,9 @@ build/
 
 # Generated artifacts
 firmware/tools/gen_vectors
+firmware/tools/sign_image
+# Per-device test key dropped in by the ssh-agent / PKCS#11 SSH E2E tests
+host/tools/openhsm-ssh-agent/docker/authorized_keys
 
 # Editor / OS
 .DS_Store

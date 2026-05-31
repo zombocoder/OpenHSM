@@ -688,11 +688,11 @@ int main(void)
         if (rh->status == HSM_OK && resp_len >= (int)(HSM_HEADER_SIZE + sizeof(hsm_selftest_t))) {
             hsm_selftest_t st;
             memcpy(&st, resp + HSM_HEADER_SIZE, sizeof(st));
-            printf("TEST  -> sha256=%s hmac=%s hkdf=%s gcm-enc=%s gcm-dec=%s x25519=%s x25519-pub=%s  [%s]\n",
+            printf("TEST  -> sha256=%s hmac=%s hkdf=%s gcm-enc=%s gcm-dec=%s x25519=%s x25519-pub=%s ecdsa=%s  [%s]\n",
                    st.sha256 ? "FAIL" : "ok", st.hmac ? "FAIL" : "ok",
                    st.hkdf ? "FAIL" : "ok", st.aesgcm_enc ? "FAIL" : "ok",
                    st.aesgcm_dec ? "FAIL" : "ok", st.x25519 ? "FAIL" : "ok",
-                   st.x25519_pub ? "FAIL" : "ok",
+                   st.x25519_pub ? "FAIL" : "ok", st.ecdsa_p256 ? "FAIL" : "ok",
                    st.overall ? "SELF-TEST FAILED" : "ALL PASS");
         } else {
             printf("TEST  -> unexpected response (len=%d status=0x%04x)\n",

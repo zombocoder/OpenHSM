@@ -26,6 +26,7 @@ extern "C" {
 #define HAL_PWR_MODULE_ENABLED
 #define HAL_RCC_MODULE_ENABLED
 #define HAL_RNG_MODULE_ENABLED
+#define HAL_PKA_MODULE_ENABLED
 
 /* ########################## Oscillator Values ############################ */
 #if !defined(HSE_VALUE)
@@ -108,6 +109,9 @@ extern "C" {
 #endif
 #ifdef HAL_HASH_MODULE_ENABLED
 #include "stm32u5xx_hal_hash.h"
+#endif
+#ifdef HAL_PKA_MODULE_ENABLED
+#include "stm32u5xx_hal_pka.h"
 #endif
 
 /* ########################## Assert Macro ################################ */

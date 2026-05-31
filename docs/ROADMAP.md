@@ -26,6 +26,11 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   (SSH login with a device-held Ed25519 key — verified end-to-end into a container)
 - ✅ Secure boot: stage-1 Ed25519-verifying bootloader + anti-rollback (§8,§19;
   software chain — HW root of trust / RDP-2 deferred to D)
+- ✅ NIST P-256 ECDSA via HW PKA (key type, GET_PUBLIC 64-B point, sign a digest,
+  KAT in self-test) + PKCS#11 CKM_ECDSA/CKM_EC_KEY_PAIR_GEN/CKA_EC_POINT — unlocks
+  stock `ssh -I` and TLS-client-cert (mTLS) keys. Verified: openssl independently
+  verified an HSM PKCS#11 signature. GET_PUBLIC is now an OPEN command (public
+  keys aren't secret; PKCS#11 clients read CKA_EC_POINT before login).
 
 ---
 

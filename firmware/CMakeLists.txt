@@ -60,7 +60,8 @@ set(HAL_SRC
     ${HAL}/Src/stm32u5xx_hal_cryp.c
     ${HAL}/Src/stm32u5xx_hal_cryp_ex.c
     ${HAL}/Src/stm32u5xx_hal_hash.c
-    ${HAL}/Src/stm32u5xx_hal_hash_ex.c)
+    ${HAL}/Src/stm32u5xx_hal_hash_ex.c
+    ${HAL}/Src/stm32u5xx_hal_pka.c)
 
 set(USB_SRC
     ${USBLIB}/Src/usbd_core.c
@@ -85,6 +86,7 @@ set(APP_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_aead.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_x25519.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_eddsa.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_ecdsa_p256.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_crypto.c
     ${VENDOR}/monocypher/src/monocypher.c
     ${VENDOR}/monocypher/src/optional/monocypher-ed25519.c)

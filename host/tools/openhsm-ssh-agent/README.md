@@ -5,9 +5,14 @@ key **inside the OpenHSM device**. It advertises the device's Ed25519 public key
 to OpenSSH and forwards every signing request to the HSM (`HSM_CMD_SIGN`) — the
 private key never touches the host.
 
-OpenSSH's own PKCS#11 path (`ssh -I`) only drives RSA / NIST-ECDSA tokens, so it
-can't use our Ed25519 keys. The agent protocol, by contrast, works natively with
-Ed25519, which is why this is the supported path today.
+OpenSSH's own PKCS#11 path (`ssh -I`) only drives RSA / NIST-ECDSA tokens, not
+Ed25519. Two ways to log in with an OpenHSM key:
+- **Ed25519** → this agent (the agent protocol is natively Ed25519).
+- **NIST P-256 ECDSA** → stock `ssh -I openhsm_pkcs11.so` (no agent). Generate an
+  EC key (`openhsm-cli gen ecdsa <label> sign`), publish it
+  (`ssh-keygen -D openhsm_pkcs11.so >> ~/.ssh/authorized_keys`), and the
+  signature is computed on the HSM. (Note: macOS's bundled `ssh-apple-pkcs11`
+  doesn't load third-party EC modules — use a standard OpenSSH/OpenSC build.)
 
 ## Build
 ```sh

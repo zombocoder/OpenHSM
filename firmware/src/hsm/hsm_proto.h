@@ -187,6 +187,7 @@ typedef enum {
     HSM_KEY_HMAC256  = 2,  /* 32-byte HMAC-SHA256 key                          */
     HSM_KEY_ED25519  = 3,  /* 32-byte Ed25519 seed                             */
     HSM_KEY_X25519   = 4,  /* 32-byte X25519 scalar                            */
+    HSM_KEY_ECDSA_P256 = 5,/* 32-byte NIST P-256 (secp256r1) private scalar    */
 } hsm_key_type_t;
 
 /* Capability bitmask. */
@@ -305,6 +306,7 @@ typedef struct __attribute__((packed)) {
     uint8_t aesgcm_dec;
     uint8_t x25519;
     uint8_t x25519_pub;
+    uint8_t ecdsa_p256;       /* NIST P-256 ECDSA (PKA) KAT                     */
     uint8_t overall;          /* 0 if every test passed                        */
 } hsm_selftest_t;
 

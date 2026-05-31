@@ -12,6 +12,7 @@
 #include "hsm_session.h"
 #include "hsm_keystore.h"
 #include "hsm_eddsa.h"
+#include "hsm_ecdsa_p256.h"
 #include "hsm_x25519.h"
 #include "hsm_hash.h"
 #include "hsm_audit.h"
@@ -33,7 +34,6 @@ static int command_needs_auth(uint16_t cmd)
     switch (cmd) {
     case HSM_CMD_GENERATE_KEY:
     case HSM_CMD_DELETE_OBJECT:
-    case HSM_CMD_GET_PUBLIC:
     case HSM_CMD_HMAC:
     case HSM_CMD_SIGN:
     case HSM_CMD_WRAP:
@@ -42,7 +42,9 @@ static int command_needs_auth(uint16_t cmd)
     case HSM_CMD_DECRYPT:
         return 1;
     default:
-        return 0;   /* PING/INFO/SELFTEST/RANDOM/FIND/GET/AUTH/session: open */
+        /* GET_PUBLIC is open: a public key is not secret, and standard PKCS#11
+         * clients (OpenSSH `ssh -I`) read CKA_EC_POINT before logging in. */
+        return 0;   /* PING/INFO/SELFTEST/RANDOM/FIND/GET/GET_PUBLIC/AUTH/session: open */
     }
 }
 
@@ -272,7 +274,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
 
     case HSM_CMD_GET_PUBLIC: {
         if (hdr.payload_length < sizeof(hsm_objid_req_t) ||
-            resp_cap < HSM_HEADER_SIZE + 32) {
+            resp_cap < HSM_HEADER_SIZE + 64) {   /* P-256 point is 64 bytes */
             return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
         }
         hsm_objid_req_t rq;
@@ -285,18 +287,24 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         if (HSM_KeyStore_LoadKey(rq.id, seed, &seed_len) != HSM_OK) {
             return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
         }
-        uint8_t pub[32];
+        uint8_t pub[64]; uint16_t pub_len = 32;
         if (info.algorithm == HSM_KEY_ED25519) {
             HSM_Ed25519_Public(seed, pub);
         } else if (info.algorithm == HSM_KEY_X25519) {
             HSM_X25519_PublicKey(pub, seed);
+        } else if (info.algorithm == HSM_KEY_ECDSA_P256) {
+            if (HSM_EcdsaP256_Public(seed, pub) != 0) {
+                memset(seed, 0, sizeof(seed));
+                return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+            }
+            pub_len = 64;   /* X || Y */
         } else {
             memset(seed, 0, sizeof(seed));
             return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
         }
         memset(seed, 0, sizeof(seed));
-        memcpy(resp + HSM_HEADER_SIZE, pub, 32);
-        return build_response(resp, &hdr, HSM_OK, 32);
+        memcpy(resp + HSM_HEADER_SIZE, pub, pub_len);
+        return build_response(resp, &hdr, HSM_OK, pub_len);
     }
 
     case HSM_CMD_SIGN: {
@@ -313,20 +321,30 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         if (HSM_KeyStore_Get(rq.id, &info) != HSM_OK) {
             return build_response(resp, &hdr, HSM_ERR_INVALID_PARAM, 0);
         }
-        if (info.algorithm != HSM_KEY_ED25519 || !(info.capabilities & HSM_CAP_SIGN)) {
+        if ((info.algorithm != HSM_KEY_ED25519 && info.algorithm != HSM_KEY_ECDSA_P256) ||
+            !(info.capabilities & HSM_CAP_SIGN)) {
             return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
         }
         uint8_t seed[64]; uint16_t seed_len;
         if (HSM_KeyStore_LoadKey(rq.id, seed, &seed_len) != HSM_OK) {
             return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
         }
-        uint8_t sig[HSM_ED25519_SIG_LEN];
-        HSM_Ed25519_Sign(seed, payload + sizeof(rq), rq.msg_len, sig);
+        uint8_t sig[64];
+        if (info.algorithm == HSM_KEY_ECDSA_P256) {
+            /* CKM_ECDSA semantics: the payload IS the 32-byte digest. */
+            if (rq.msg_len != 32 || HSM_EcdsaP256_Sign(seed, payload + sizeof(rq), sig) != 0) {
+                memset(seed, 0, sizeof(seed));
+                return build_response(resp, &hdr, (rq.msg_len != 32) ? HSM_ERR_BAD_LENGTH
+                                                                     : HSM_ERR_INTERNAL, 0);
+            }
+        } else {
+            HSM_Ed25519_Sign(seed, payload + sizeof(rq), rq.msg_len, sig);
+        }
         memset(seed, 0, sizeof(seed));
         HSM_KeyStore_BumpUsage(rq.id);
         HSM_Audit_Log(HSM_EV_SIGN, (uint16_t)rq.id);
-        memcpy(resp + HSM_HEADER_SIZE, sig, sizeof(sig));
-        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(sig));
+        memcpy(resp + HSM_HEADER_SIZE, sig, 64);
+        return build_response(resp, &hdr, HSM_OK, 64);
     }
 
     case HSM_CMD_HMAC: {

@@ -42,6 +42,10 @@ static CK_BBOOL   g_have_info;
 
 /* Serialized device exchange — the ONLY path to the wire. Returns the
  * transport result code (0 = ok). */
+/* Forward decl: used by C_GetAttributeValue (CKA_EC_POINT) before its definition. */
+static CK_RV device_cmd(uint16_t cmd, const uint8_t *payload, uint16_t plen,
+                        uint8_t *resp, int cap, const uint8_t **out, int *out_len);
+
 static int locked_cmd(uint16_t cmd, const uint8_t *payload, uint16_t plen,
                       uint8_t *resp, int cap, int *rl)
 {
@@ -198,6 +202,8 @@ static const CK_MECHANISM_TYPE g_mechs[] = {
     CKM_AES_KEY_WRAP,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EDDSA,
+    CKM_EC_KEY_PAIR_GEN,
+    CKM_ECDSA,
     CKM_AES_KEY_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
 };
@@ -238,11 +244,19 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         pInfo->ulMinKeySize = 32; pInfo->ulMaxKeySize = 32;
         pInfo->flags = CKF_SIGN | CKF_VERIFY;
         break;
+    case CKM_ECDSA:
+        pInfo->ulMinKeySize = 256; pInfo->ulMaxKeySize = 256;   /* P-256 bits */
+        pInfo->flags = CKF_SIGN | CKF_VERIFY | CKF_EC_F_P | CKF_EC_NAMEDCURVE;
+        break;
     case CKM_AES_KEY_GEN:
     case CKM_GENERIC_SECRET_KEY_GEN:
     case CKM_EC_EDWARDS_KEY_PAIR_GEN:
         pInfo->ulMinKeySize = 32; pInfo->ulMaxKeySize = 32;
         pInfo->flags = CKF_GENERATE | CKF_GENERATE_KEY_PAIR;
+        break;
+    case CKM_EC_KEY_PAIR_GEN:
+        pInfo->ulMinKeySize = 256; pInfo->ulMaxKeySize = 256;
+        pInfo->flags = CKF_GENERATE_KEY_PAIR | CKF_EC_F_P | CKF_EC_NAMEDCURVE;
         break;
     default:
         return CKR_MECHANISM_INVALID;
@@ -428,8 +442,9 @@ static CK_OBJECT_CLASS class_of(uint16_t alg)
     case HSM_KEY_AES256:
     case HSM_KEY_HMAC256: return CKO_SECRET_KEY;
     case HSM_KEY_ED25519:
-    case HSM_KEY_X25519:  return CKO_PRIVATE_KEY;
-    default:              return CKO_SECRET_KEY;
+    case HSM_KEY_X25519:
+    case HSM_KEY_ECDSA_P256: return CKO_PRIVATE_KEY;
+    default:                 return CKO_SECRET_KEY;
     }
 }
 
@@ -440,6 +455,7 @@ static CK_KEY_TYPE keytype_of(uint16_t alg)
     case HSM_KEY_HMAC256: return CKK_GENERIC_SECRET;
     case HSM_KEY_ED25519: return CKK_EC_EDWARDS;
     case HSM_KEY_X25519:  return CKK_EC_MONTGOMERY;
+    case HSM_KEY_ECDSA_P256: return CKK_EC;
     default:              return CKK_GENERIC_SECRET;
     }
 }
@@ -580,6 +596,7 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     session_t *s = session_of(hSession);
     if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
     const hsm_obj_info_t *o = obj_by_handle(s, hObject);
+    if (o == NULL) { load_objects(s); o = obj_by_handle(s, hObject); }  /* refresh after generate */
     if (o == NULL) return CKR_OBJECT_HANDLE_INVALID;
 
     CK_RV result = CKR_OK;
@@ -601,6 +618,25 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         case CKA_LABEL:        set_attr(a, o->label, strnlen((const char *)o->label, HSM_LABEL_LEN)); break;
         case CKA_ID:           { uint8_t id[4] = { (uint8_t)o->id, (uint8_t)(o->id>>8), (uint8_t)(o->id>>16), (uint8_t)(o->id>>24) }; set_attr(a, id, 4); break; }
         case CKA_VALUE_LEN:    { CK_ULONG v = o->key_bits / 8; set_attr(a, &v, sizeof(v)); break; }
+        case CKA_EC_PARAMS:    /* curve OID; only meaningful for EC (P-256) keys */
+            if (keytype_of(o->algorithm) == CKK_EC) {
+                /* DER OID prime256v1 (1.2.840.10045.3.1.7) */
+                static const uint8_t oid_p256[] = { 0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07 };
+                set_attr(a, oid_p256, sizeof(oid_p256));
+            } else { a->ulValueLen = CK_UNAVAILABLE_INFORMATION; result = CKR_ATTRIBUTE_TYPE_INVALID; }
+            break;
+        case CKA_EC_POINT:     /* DER OCTET STRING wrapping uncompressed point 04||X||Y */
+            if (keytype_of(o->algorithm) == CKK_EC) {
+                uint8_t rb[HSM_MAX_MSG]; const uint8_t *out; int olen;
+                hsm_objid_req_t q = { .id = o->id };
+                if (device_cmd(HSM_CMD_GET_PUBLIC, (uint8_t *)&q, sizeof(q),
+                               rb, sizeof(rb), &out, &olen) == CKR_OK && olen == 64) {
+                    uint8_t pt[67]; pt[0] = 0x04; pt[1] = 0x41; pt[2] = 0x04;
+                    memcpy(pt + 3, out, 64);
+                    set_attr(a, pt, sizeof(pt));
+                } else { a->ulValueLen = CK_UNAVAILABLE_INFORMATION; result = CKR_FUNCTION_FAILED; }
+            } else { a->ulValueLen = CK_UNAVAILABLE_INFORMATION; result = CKR_ATTRIBUTE_TYPE_INVALID; }
+            break;
         default:
             a->ulValueLen = CK_UNAVAILABLE_INFORMATION;
             result = CKR_ATTRIBUTE_TYPE_INVALID;
@@ -842,7 +878,8 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech, CK_OBJECT_H
     if (s == NULL) return CKR_SESSION_HANDLE_INVALID;
     if (s->sign_active) return CKR_OPERATION_ACTIVE;
     if (pMech == NULL) return CKR_ARGUMENTS_BAD;
-    if (pMech->mechanism != CKM_SHA256_HMAC && pMech->mechanism != CKM_EDDSA)
+    if (pMech->mechanism != CKM_SHA256_HMAC && pMech->mechanism != CKM_EDDSA &&
+        pMech->mechanism != CKM_ECDSA)
         return CKR_MECHANISM_INVALID;
     s->sign_key = hKey; s->sign_mech = pMech->mechanism; s->sign_active = CK_TRUE;
     return CKR_OK;
@@ -852,8 +889,10 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech, CK_OBJECT_H
 static CK_RV sign_core(session_t *s, const uint8_t *data, CK_ULONG dlen,
                        CK_BYTE_PTR pSig, CK_ULONG_PTR pulSigLen)
 {
-    CK_ULONG siglen = (s->sign_mech == CKM_EDDSA) ? 64 : 32;
-    uint16_t devcmd = (s->sign_mech == CKM_EDDSA) ? HSM_CMD_SIGN : HSM_CMD_HMAC;
+    /* EdDSA + ECDSA → device SIGN (64-B sig); HMAC → device HMAC (32-B). For
+     * ECDSA the caller passes the 32-B digest (CKM_ECDSA), sent as the message. */
+    CK_ULONG siglen = (s->sign_mech == CKM_SHA256_HMAC) ? 32 : 64;
+    uint16_t devcmd = (s->sign_mech == CKM_SHA256_HMAC) ? HSM_CMD_HMAC : HSM_CMD_SIGN;
     if (pSig == NULL) { *pulSigLen = siglen; return CKR_OK; }
     if (*pulSigLen < siglen) { *pulSigLen = siglen; return CKR_BUFFER_TOO_SMALL; }
     if (sizeof(hsm_keyop_req_t) + dlen > HSM_MAX_MSG_PAYLOAD) return CKR_DATA_LEN_RANGE;
@@ -1076,13 +1115,18 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
     (void)pPubT; (void)ulPubN;
     if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
     if (pMech == NULL || phPub == NULL || phPriv == NULL) return CKR_ARGUMENTS_BAD;
-    if (pMech->mechanism != CKM_EC_EDWARDS_KEY_PAIR_GEN) return CKR_MECHANISM_INVALID;
+    if (pMech->mechanism != CKM_EC_EDWARDS_KEY_PAIR_GEN &&
+        pMech->mechanism != CKM_EC_KEY_PAIR_GEN) return CKR_MECHANISM_INVALID;
 
     hsm_genkey_req_t rq;
     memset(&rq, 0, sizeof(rq));
-    rq.algorithm = HSM_KEY_ED25519;
+    /* EC_KEY_PAIR_GEN → P-256 ECDSA; EC_EDWARDS_KEY_PAIR_GEN → Ed25519. The
+     * caller's CKA_EC_PARAMS (prime256v1) is taken as given — we only do P-256. */
+    rq.algorithm = (pMech->mechanism == CKM_EC_KEY_PAIR_GEN) ? HSM_KEY_ECDSA_P256
+                                                             : HSM_KEY_ED25519;
     rq.key_bits = 256;
     parse_keygen_template(pPrivT, ulPrivN, &rq);
+    parse_keygen_template(pPubT,  ulPubN,  &rq);   /* caps may be on the public template */
 
     uint8_t resp[HSM_MAX_MSG]; const uint8_t *out; int olen;
     CK_RV rv = device_cmd(HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq),
