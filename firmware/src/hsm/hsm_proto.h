@@ -128,6 +128,7 @@ typedef enum {
     HSM_EV_UNWRAP    = 9,
     HSM_EV_ENCRYPT   = 10,
     HSM_EV_DECRYPT   = 11,
+    HSM_EV_SET_PIN   = 12,
 } hsm_audit_event_t;
 
 /* One audit entry: monotonic seq + event + arg (object id / status) + a

@@ -551,7 +551,8 @@ static const char *ev_name(uint16_t e)
     case HSM_EV_KEYDEL: return "KEYDEL"; case HSM_EV_SIGN: return "SIGN";
     case HSM_EV_HMAC: return "HMAC"; case HSM_EV_WRAP: return "WRAP";
     case HSM_EV_UNWRAP: return "UNWRAP"; case HSM_EV_ENCRYPT: return "ENCRYPT";
-    case HSM_EV_DECRYPT: return "DECRYPT"; default: return "?";
+    case HSM_EV_DECRYPT: return "DECRYPT"; case HSM_EV_SET_PIN: return "SET_PIN";
+    default: return "?";
     }
 }
 

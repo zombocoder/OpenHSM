@@ -7,6 +7,16 @@ PKCS#11 / OpenSC / p11-kit consumers.
 > Work in progress. See `firmware/README.md` for the device build/flash flow and
 > the technical specification for the full design.
 
+## Documentation
+
+- [docs/firmware.md](docs/firmware.md) — firmware architecture, USB/command
+  protocol, secure session, key store, crypto, auth & audit, source map.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — what's done vs. what remains for a
+  production-ready device (secure boot, TrustZone, tamper, manufacturing, …).
+- [host/openbao/README.md](host/openbao/README.md) — OpenBao auto-unseal demo.
+- [host/tools/openhsm-cli/README.md](host/tools/openhsm-cli/README.md) —
+  maintenance/debug CLI (local USB or remote via openhsm-daemon).
+
 ## Layout
 
 ```
@@ -14,6 +24,10 @@ firmware/     STM32U585 firmware (C, STM32 HAL, CMake + arm-none-eabi)
   vendor/     CMSIS / HAL / USB Device Library / Monocypher (git submodules)
 host/         host-side tools
   tools/openhsm-ping   libusb + libsodium smoke-test client
+  tools/openhsm-cli    maintenance/debug CLI (USB or remote via daemon)
+  daemon/              USB↔TCP bridge for remote / Kubernetes access
+  pkcs11/              PKCS#11 provider + shared transport
+  openbao/             OpenBao auto-unseal integration
 docs/         design notes
 Makefile      top-level orchestrator (see `make help`)
 ```

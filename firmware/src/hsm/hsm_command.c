@@ -144,6 +144,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         const uint8_t *new_pin = old_pin + rq.old_len;
         uint8_t tries = 0;
         uint16_t st = HSM_KeyStore_SetPin(old_pin, rq.old_len, new_pin, rq.new_len, &tries);
+        HSM_Audit_Log(st == HSM_OK ? HSM_EV_SET_PIN : HSM_EV_AUTH_FAIL, tries);
         hsm_auth_resp_t ar = { .authenticated = 0, .tries_left = tries };
         memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
         return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
