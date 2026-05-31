@@ -405,24 +405,31 @@ static CK_KEY_TYPE keytype_of(uint16_t alg)
     }
 }
 
-/* Load all objects from the device into the session cache. */
+/* Load all objects from the device into the session cache (paged FIND). */
 static CK_RV load_objects(session_t *s)
 {
     uint8_t resp[HSM_MAX_MSG];
     int rl = 0;
     s->nobjs = 0;
-    if (ohsm_cmd(g_ctx, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &rl) != 0)
-        return CKR_DEVICE_ERROR;
-    hsm_header_t *rh = (hsm_header_t *)resp;
-    if (rh->status != HSM_OK) return CKR_DEVICE_ERROR;
-    hsm_find_resp_t fr;
-    memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
-    int n = fr.count;
-    if (n > (int)HSM_MAX_OBJECTS) n = (int)HSM_MAX_OBJECTS;
-    const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
-    for (int i = 0; i < n; i++)
-        memcpy(&s->objs[i], p + i * sizeof(hsm_obj_info_t), sizeof(hsm_obj_info_t));
-    s->nobjs = n;
+    uint16_t offset = 0, total = 0;
+    do {
+        hsm_find_req_t rq; memset(&rq, 0, sizeof(rq));
+        rq.offset = offset;   /* {offset, max=0}: page, no label filter */
+        if (ohsm_cmd(g_ctx, HSM_CMD_FIND_OBJECT, (uint8_t *)&rq, 4,
+                     resp, sizeof(resp), &rl) != 0)
+            return CKR_DEVICE_ERROR;
+        hsm_header_t *rh = (hsm_header_t *)resp;
+        if (rh->status != HSM_OK) return CKR_DEVICE_ERROR;
+        hsm_find_resp_t fr;
+        memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
+        total = fr.total;
+        const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
+        for (int i = 0; i < fr.count && s->nobjs < (int)HSM_MAX_OBJECTS; i++)
+            memcpy(&s->objs[s->nobjs++], p + i * sizeof(hsm_obj_info_t),
+                   sizeof(hsm_obj_info_t));
+        if (fr.count == 0) break;
+        offset = fr.next_offset;
+    } while (s->nobjs < (int)total && s->nobjs < (int)HSM_MAX_OBJECTS);
     return CKR_OK;
 }
 
@@ -575,6 +582,7 @@ static CK_RV device_cmd(uint16_t cmd, const uint8_t *payload, uint16_t plen,
     int rl = 0;
     if (ohsm_cmd(g_ctx, cmd, payload, plen, resp, cap, &rl) != 0) return CKR_DEVICE_ERROR;
     hsm_header_t *rh = (hsm_header_t *)resp;
+    if (rh->status == HSM_ERR_STORE_FULL) return CKR_DEVICE_MEMORY;
     if (rh->status != HSM_OK) return CKR_FUNCTION_FAILED;
     if (out) *out = resp + HSM_HEADER_SIZE;
     if (out_len) *out_len = rh->payload_length;

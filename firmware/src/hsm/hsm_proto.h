@@ -72,6 +72,7 @@ typedef enum {
     HSM_CMD_ENCRYPT         = 0x0041,  /* AES-256-GCM with a stored key         */
     HSM_CMD_DECRYPT         = 0x0042,
     HSM_CMD_GET_AUDIT_LOG   = 0x0050,
+    HSM_CMD_GET_STORAGE     = 0x0051,  /* key-store capacity & fill level       */
 } hsm_command_t;
 
 /* Response status codes. */
@@ -85,6 +86,7 @@ typedef enum {
     HSM_ERR_NOT_IMPLEMENTED = 0x0006,
     HSM_ERR_KEY_VERIFY      = 0x0007,  /* freshly stored key failed self-verify */
     HSM_ERR_LOCKED          = 0x0008,  /* PIN retry counter exhausted           */
+    HSM_ERR_STORE_FULL      = 0x0009,  /* no free object slot                   */
     HSM_ERR_INTERNAL        = 0x00FF,
 } hsm_status_t;
 
@@ -189,7 +191,7 @@ typedef enum {
 #define HSM_CAP_DERIVE   0x0040u
 
 #define HSM_LABEL_LEN    32u
-#define HSM_MAX_OBJECTS  8u
+#define HSM_MAX_OBJECTS  32u
 
 /* GENERATE_KEY request payload. */
 typedef struct __attribute__((packed)) {
@@ -215,9 +217,27 @@ typedef struct __attribute__((packed)) {
     uint8_t  label[HSM_LABEL_LEN];
 } hsm_obj_info_t;
 
-/* FIND_OBJECT response: count followed by `count` hsm_obj_info_t records. */
+/* FIND_OBJECT request. All fields are optional, selected by payload length:
+ *   empty payload        -> offset 0, no label filter, fill one page
+ *   >= 4 bytes           -> {offset, max}
+ *   >= sizeof(this)      -> + 32-byte exact label filter
+ * `max` == 0 means "as many as fit in one response". The store may hold more
+ * objects than fit a single 512-byte message, so callers must page with
+ * `offset` until next_offset == total. */
 typedef struct __attribute__((packed)) {
-    uint16_t count;
+    uint16_t offset;           /* skip this many matching objects               */
+    uint16_t max;              /* cap on records to return (0 = page full)      */
+    uint8_t  label[HSM_LABEL_LEN]; /* optional exact-match filter               */
+} hsm_find_req_t;
+
+/* FIND_OBJECT response: header, then `count` hsm_obj_info_t records (this page).
+ * `total` is the full match count; `next_offset` is the offset to request the
+ * next page (equals `total` once the last page has been returned). */
+typedef struct __attribute__((packed)) {
+    uint16_t count;            /* records in THIS response                      */
+    uint16_t total;            /* total matching objects in the store           */
+    uint16_t next_offset;      /* offset for the next page; == total when done  */
+    uint16_t reserved;
 } hsm_find_resp_t;
 
 /* DELETE_OBJECT / GET_OBJECT / GET_PUBLIC request payload. */
@@ -296,6 +316,21 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint16_t count;           /* clamped to HSM_RANDOM_MAX by the device       */
 } hsm_random_req_t;
+
+/* GET_STORAGE response: key-store capacity and current fill. No request body.
+ * `max_objects` is the configured (firmware) slot limit; `region_capacity` is
+ * how many slots would physically fit in the flash region if that limit were
+ * raised. `store_bytes` is what the store structure occupies of `region_size`. */
+typedef struct __attribute__((packed)) {
+    uint16_t max_objects;      /* HSM_MAX_OBJECTS: configured slot limit        */
+    uint16_t used_objects;     /* slots currently occupied                      */
+    uint16_t region_capacity;  /* slots that physically fit in the flash region */
+    uint16_t slot_size;        /* bytes per object slot                         */
+    uint16_t key_blob_max;     /* max key-material bytes per object             */
+    uint16_t label_max;        /* max label length                             */
+    uint32_t region_size;      /* persistent flash region size (bytes)          */
+    uint32_t store_bytes;      /* bytes the store structure occupies            */
+} hsm_storage_info_t;
 
 /* Magic the PING command echoes back, to prove a live round-trip. */
 #define HSM_PING_MAGIC           0x4F48534Du /* "OHSM" */

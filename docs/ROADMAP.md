@@ -58,8 +58,10 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - 🟡 **Durable audit log**: persist the full entry stream (dedicated flash log
   region / external sink), not just the monotonic counter (today entries are a
   RAM ring; only the counter survives reboot).
-- 🟡 **Store capacity**: `HSM_MAX_OBJECTS=8` (FIND response must fit one message);
-  paginate FIND and/or grow the store for more objects.
+- ✅ **Store capacity**: `HSM_MAX_OBJECTS=32`, `FIND_OBJECT` paged
+  (`offset`/`total`/`next_offset`), `GET_STORAGE` reports fill. The 8 KB page
+  physically holds ~50 slots; raising the limit further is a one-line change.
+- ⬜ **Multi-page store** to exceed ~50 objects (needs a second flash region).
 - ⬜ **Wear levelling** for the single-page store under heavy key churn.
 - ⬜ **RTC / trusted time** for real audit timestamps (currently seq-ordered only).
 - ⬜ **Monotonic anti-replay counters** hardened against power-loss races.

@@ -101,6 +101,7 @@ not the USB ISR.
 | 0x0041 | ENCRYPT            | yes  | AES-256-GCM with a stored key |
 | 0x0042 | DECRYPT            | yes  | AES-256-GCM decrypt + verify |
 | 0x0050 | GET_AUDIT_LOG      | no   | recent audit entries |
+| 0x0051 | GET_STORAGE        | no   | key-store capacity & fill level |
 | 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED | — | reserved (WRAP/UNWRAP used instead) |
 
 ¹ SET_PIN is self-authenticating (verifies the old PIN). "Auth: yes" commands
@@ -109,7 +110,7 @@ require a prior successful AUTH (login state is global per power cycle — see �
 ### Status codes
 `OK`=0, `UNKNOWN_CMD`=1, `BAD_LENGTH`=2, `NOT_AUTHORIZED`=3, `NO_SESSION`=4,
 `INVALID_PARAM`=5, `NOT_IMPLEMENTED`=6, `KEY_VERIFY`=7, `LOCKED`=8,
-`INTERNAL`=0xFF.
+`STORE_FULL`=9 (no free object slot → PKCS#11 `CKR_DEVICE_MEMORY`), `INTERNAL`=0xFF.
 
 ---
 
@@ -147,7 +148,22 @@ per-object: AES-256-GCM(KEK, random nonce, AAD = object metadata) → enc_key‖
 
 - One 8 KB flash page (bank 2, `0x081FE000`) holds a `store_t`: header
   (magic/version, `next_id`, `next_seq`, PIN state, `audit_seq`) + up to
-  `HSM_MAX_OBJECTS` (8) fixed 160-byte slots (16-byte aligned).
+  `HSM_MAX_OBJECTS` (32) fixed 160-byte slots (16-byte aligned).
+
+**Capacity.** Hard limit = **32 objects** (`HSM_MAX_OBJECTS`); the store occupies
+5192 B of the 8 KB page (72 B header + 32×160 B slots). The page could
+physically hold ~50 slots (`region_capacity`), so the configured 32 is the
+active ceiling, not the flash. Query the live fill with `GET_STORAGE` (0x0051) —
+returns used/max slots, slot size, region size, store bytes, and the region's
+physical slot capacity; `openhsm-cli storage` formats it.
+
+`FIND_OBJECT` is **paged**: a single 512 B response holds only ~9 records
+(`hsm_find_resp_t` header + N×52 B `hsm_obj_info_t`), so the store can hold more
+objects than one message. The request is `hsm_find_req_t {offset, max, [label]}`
+(empty payload = page 0, no filter); the response header carries `count`
+(this page), `total` (all matches) and `next_offset`. Clients loop, advancing
+`offset` to `next_offset` until `next_offset == total`. `openhsm-cli list`, the
+PKCS#11 provider's object cache, and the ping harness all page this way.
 - Object types: AES-256, HMAC-SHA256, Ed25519, X25519. Each slot stores
   immutable metadata (id, algorithm, capabilities, key_bits, exportable,
   auth_domain, created_seq, label) authenticated as the GCM AAD, then the

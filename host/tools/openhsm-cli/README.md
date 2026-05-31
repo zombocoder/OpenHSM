@@ -23,6 +23,7 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 | `ping` | liveness check |
 | `info` | proto/fw version + device serial |
 | `selftest` | crypto known-answer self-test |
+| `storage` | key-store capacity & fill (used/max slots, region bytes) |
 | `random <n>` | `n` random bytes (hex) |
 | `list` | list key objects (id, type, caps, usage, label) |
 | `get <id>` | one object's metadata |

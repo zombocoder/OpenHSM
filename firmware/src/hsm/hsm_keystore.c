@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 8u  /* added audit_seq to the store header */
+#define STORE_VERSION 9u  /* HSM_MAX_OBJECTS 8 -> 32 (store layout changed) */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -248,7 +248,7 @@ static uint16_t store_key(uint16_t algorithm, uint16_t key_bits, uint16_t caps,
         if (store.slots[i].magic != SLOT_MAGIC) { s = &store.slots[i]; break; }
     }
     if (s == NULL) {
-        return HSM_ERR_INTERNAL;  /* store full */
+        return HSM_ERR_STORE_FULL;  /* no free slot */
     }
 
     /* Populate metadata first (it is the GCM AAD). */
@@ -311,16 +311,39 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
     return st;
 }
 
-uint16_t HSM_KeyStore_Find(const uint8_t *label, hsm_obj_info_t *out, uint16_t max)
+uint16_t HSM_KeyStore_Find(const uint8_t *label, uint16_t offset,
+                           hsm_obj_info_t *out, uint16_t max, uint16_t *total)
 {
-    uint16_t n = 0;
-    for (unsigned i = 0; i < HSM_MAX_OBJECTS && n < max; i++) {
+    uint16_t n = 0;   /* records written to `out` */
+    uint16_t m = 0;   /* matching objects seen so far (for offset paging) */
+    for (unsigned i = 0; i < HSM_MAX_OBJECTS; i++) {
         keyslot_t *s = &store.slots[i];
         if (s->magic != SLOT_MAGIC) continue;
         if (label != NULL && memcmp(s->label, label, HSM_LABEL_LEN) != 0) continue;
-        fill_info(s, &out[n++]);
+        if (m >= offset && n < max) fill_info(s, &out[n++]);
+        m++;
     }
+    if (total != NULL) *total = m;
     return n;
+}
+
+void HSM_KeyStore_StorageInfo(hsm_storage_info_t *out)
+{
+    uint16_t used = 0;
+    for (unsigned i = 0; i < HSM_MAX_OBJECTS; i++) {
+        if (store.slots[i].magic == SLOT_MAGIC) used++;
+    }
+    /* Fixed part of the store = everything that is not the slot array. */
+    const uint32_t header = (uint32_t)(sizeof(store_t) -
+                                       (size_t)HSM_MAX_OBJECTS * sizeof(keyslot_t));
+    out->max_objects     = HSM_MAX_OBJECTS;
+    out->used_objects    = used;
+    out->slot_size       = (uint16_t)sizeof(keyslot_t);
+    out->key_blob_max    = KEY_BLOB_MAX;
+    out->label_max       = HSM_LABEL_LEN;
+    out->region_size     = OPENHSM_STORE_SIZE;
+    out->store_bytes     = (uint32_t)sizeof(store_t);
+    out->region_capacity = (uint16_t)((OPENHSM_STORE_SIZE - header) / sizeof(keyslot_t));
 }
 
 uint16_t HSM_KeyStore_Get(uint32_t id, hsm_obj_info_t *out)

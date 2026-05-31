@@ -205,13 +205,28 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
     }
 
     case HSM_CMD_FIND_OBJECT: {
-        /* Optional 32-byte label filter; empty payload = list all. */
-        const uint8_t *label = (hdr.payload_length >= HSM_LABEL_LEN) ? payload : NULL;
+        /* Paged request: {offset, max} then an optional 32-byte label filter.
+         * Empty payload = page 0, no filter (back-compatible default). */
+        uint16_t offset = 0, want = 0;
+        const uint8_t *label = NULL;
+        if (hdr.payload_length >= 4) {
+            hsm_find_req_t rq;
+            memcpy(&rq, payload, sizeof(rq) <= hdr.payload_length ? sizeof(rq) : 4);
+            offset = rq.offset;
+            want   = rq.max;
+            if (hdr.payload_length >= sizeof(hsm_find_req_t)) label = rq.label;
+        }
         hsm_find_resp_t fr;
-        hsm_obj_info_t infos[HSM_MAX_OBJECTS];
+        /* How many records fit one response; never more than a single page. */
         uint16_t fit = (uint16_t)((resp_cap - HSM_HEADER_SIZE - sizeof(fr)) / sizeof(hsm_obj_info_t));
-        if (fit > HSM_MAX_OBJECTS) fit = HSM_MAX_OBJECTS;
-        fr.count = HSM_KeyStore_Find(label, infos, fit);
+        hsm_obj_info_t infos[16];
+        if (fit > 16) fit = 16;
+        if (want != 0 && want < fit) fit = want;
+        uint16_t total = 0;
+        fr.count       = HSM_KeyStore_Find(label, offset, infos, fit, &total);
+        fr.total       = total;
+        fr.next_offset = (uint16_t)(offset + fr.count);
+        fr.reserved    = 0;
         memcpy(resp + HSM_HEADER_SIZE, &fr, sizeof(fr));
         memcpy(resp + HSM_HEADER_SIZE + sizeof(fr), infos,
                fr.count * sizeof(hsm_obj_info_t));
@@ -433,6 +448,16 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
                n * sizeof(hsm_audit_entry_t));
         return build_response(resp, &hdr, HSM_OK,
                               (uint16_t)(sizeof(hdr_resp) + n * sizeof(hsm_audit_entry_t)));
+    }
+
+    case HSM_CMD_GET_STORAGE: {
+        if (resp_cap < HSM_HEADER_SIZE + sizeof(hsm_storage_info_t)) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        hsm_storage_info_t si;
+        HSM_KeyStore_StorageInfo(&si);
+        memcpy(resp + HSM_HEADER_SIZE, &si, sizeof(si));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(si));
     }
 
     case HSM_CMD_RANDOM: {

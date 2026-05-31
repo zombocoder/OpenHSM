@@ -201,27 +201,38 @@ static void do_keystore(libusb_device_handle *h)
     static const char TEST_LABEL[] = "openhsm-test-key";
     uint8_t resp[HSM_MAX_MSG];
     int resp_len = 0;
+    hsm_header_t rh;
 
-    /* FIND all */
-    if (send_command(h, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &resp_len) != 0) return;
-    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
-    if (rh.status != HSM_OK) { printf("KEYS  -> FIND failed (0x%04x)\n", rh.status); return; }
-    hsm_find_resp_t fr; memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
-    printf("KEYS  -> %u object(s) in store:\n", fr.count);
-
+    /* FIND all (paged) */
     uint32_t found_id = 0;
-    const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
-    for (int i = 0; i < fr.count; i++) {
-        hsm_obj_info_t o; memcpy(&o, p + i * sizeof(o), sizeof(o));
-        char lbl[HSM_LABEL_LEN + 1] = {0};
-        memcpy(lbl, o.label, HSM_LABEL_LEN);
-        printf("         id=%u alg=%s caps=0x%04x bits=%u exp=%u seq=%u label=\"%s\"\n",
-               o.id, alg_name(o.algorithm), o.capabilities, o.key_bits,
-               o.exportable, o.created_seq, lbl);
-        if (memcmp(o.label, TEST_LABEL, sizeof(TEST_LABEL) - 1) == 0 &&
-            o.label[sizeof(TEST_LABEL) - 1] == 0)
-            found_id = o.id;
-    }
+    uint16_t offset = 0, total = 0, scanned = 0;
+    int header_done = 0;
+    do {
+        hsm_find_req_t freq; memset(&freq, 0, sizeof(freq));
+        freq.offset = offset;   /* {offset, max=0}: page, no label filter */
+        if (send_command(h, HSM_CMD_FIND_OBJECT, (uint8_t *)&freq, 4,
+                         resp, sizeof(resp), &resp_len) != 0) return;
+        memcpy(&rh, resp, sizeof(rh));
+        if (rh.status != HSM_OK) { printf("KEYS  -> FIND failed (0x%04x)\n", rh.status); return; }
+        hsm_find_resp_t fr; memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
+        total = fr.total;
+        if (!header_done) { printf("KEYS  -> %u object(s) in store:\n", total); header_done = 1; }
+        const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
+        for (int i = 0; i < fr.count; i++) {
+            hsm_obj_info_t o; memcpy(&o, p + i * sizeof(o), sizeof(o));
+            char lbl[HSM_LABEL_LEN + 1] = {0};
+            memcpy(lbl, o.label, HSM_LABEL_LEN);
+            printf("         id=%u alg=%s caps=0x%04x bits=%u exp=%u seq=%u label=\"%s\"\n",
+                   o.id, alg_name(o.algorithm), o.capabilities, o.key_bits,
+                   o.exportable, o.created_seq, lbl);
+            if (memcmp(o.label, TEST_LABEL, sizeof(TEST_LABEL) - 1) == 0 &&
+                o.label[sizeof(TEST_LABEL) - 1] == 0)
+                found_id = o.id;
+        }
+        scanned += fr.count;
+        if (fr.count == 0) break;
+        offset = fr.next_offset;
+    } while (scanned < total);
 
     if (found_id != 0) {
         printf("KEYS  -> test key persisted across boot: id=%u  [PERSIST OK]\n", found_id);
@@ -264,12 +275,19 @@ static uint32_t find_or_generate_ex(libusb_device_handle *h, const char *label,
     uint8_t resp[HSM_MAX_MSG];
     int resp_len = 0;
     size_t llen = strlen(label);
+    hsm_header_t rh;
 
-    if (send_command(h, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &resp_len) != 0)
-        return 0;
-    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
-    if (rh.status == HSM_OK) {
+    uint16_t offset = 0, total = 0, scanned = 0;
+    do {
+        hsm_find_req_t freq; memset(&freq, 0, sizeof(freq));
+        freq.offset = offset;   /* {offset, max=0}: page, no label filter */
+        if (send_command(h, HSM_CMD_FIND_OBJECT, (uint8_t *)&freq, 4,
+                         resp, sizeof(resp), &resp_len) != 0)
+            break;
+        memcpy(&rh, resp, sizeof(rh));
+        if (rh.status != HSM_OK) break;
         hsm_find_resp_t fr; memcpy(&fr, resp + HSM_HEADER_SIZE, sizeof(fr));
+        total = fr.total;
         const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(fr);
         for (int i = 0; i < fr.count; i++) {
             hsm_obj_info_t o; memcpy(&o, p + i * sizeof(o), sizeof(o));
@@ -277,7 +295,10 @@ static uint32_t find_or_generate_ex(libusb_device_handle *h, const char *label,
                 (llen == HSM_LABEL_LEN || o.label[llen] == 0))
                 return o.id;
         }
-    }
+        scanned += fr.count;
+        if (fr.count == 0) break;
+        offset = fr.next_offset;
+    } while (scanned < total);
 
     hsm_genkey_req_t rq;
     memset(&rq, 0, sizeof(rq));

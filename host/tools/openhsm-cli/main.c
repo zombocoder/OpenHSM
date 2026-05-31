@@ -66,6 +66,7 @@ static const char *status_str(uint16_t s)
     case HSM_ERR_NOT_IMPLEMENTED: return "not implemented";
     case HSM_ERR_KEY_VERIFY: return "key self-verify failed";
     case HSM_ERR_LOCKED: return "locked (PIN tries exhausted)";
+    case HSM_ERR_STORE_FULL: return "store full (no free slot)";
     default: return "internal error";
     }
 }
@@ -138,6 +139,27 @@ static int c_info(ohsm_ctx *c, int ac, char **av)
     printf("\n");
     return 0;
 }
+static int c_storage(ohsm_ctx *c, int ac, char **av)
+{
+    (void)ac; (void)av;
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint16_t st = cmd(c, HSM_CMD_GET_STORAGE, NULL, 0, resp, sizeof(resp), &o, &ol);
+    if (st != HSM_OK) { fprintf(stderr, "storage: %s\n", status_str(st)); return 1; }
+    hsm_storage_info_t s; memcpy(&s, o, sizeof(s));
+    unsigned free_slots = (s.max_objects > s.used_objects)
+                          ? (unsigned)(s.max_objects - s.used_objects) : 0u;
+    double pct = s.max_objects ? (100.0 * s.used_objects / s.max_objects) : 0.0;
+    printf("objects:  %u / %u used  (%u free, %.0f%% full)\n",
+           s.used_objects, s.max_objects, free_slots, pct);
+    printf("slot:     %u B/object  (key material <= %u B, label <= %u B)\n",
+           s.slot_size, s.key_blob_max, s.label_max);
+    printf("region:   %u B flash, store uses %u B (%u B free)\n",
+           s.region_size, s.store_bytes,
+           s.region_size > s.store_bytes ? s.region_size - s.store_bytes : 0u);
+    printf("capacity: region physically holds %u slots; firmware limit is %u "
+           "(raise HSM_MAX_OBJECTS for more)\n", s.region_capacity, s.max_objects);
+    return 0;
+}
 static int c_selftest(ohsm_ctx *c, int ac, char **av)
 {
     (void)ac; (void)av;
@@ -166,18 +188,29 @@ static int c_list(ohsm_ctx *c, int ac, char **av)
 {
     (void)ac; (void)av;
     uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
-    uint16_t st = cmd(c, HSM_CMD_FIND_OBJECT, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "list: %s\n", status_str(st)); return 1; }
-    hsm_find_resp_t fr; memcpy(&fr, o, sizeof(fr));
-    const uint8_t *p = o + sizeof(fr);
-    printf("%u object(s):\n", fr.count);
-    for (int i = 0; i < fr.count; i++) {
-        hsm_obj_info_t k; memcpy(&k, p + i * sizeof(k), sizeof(k));
-        char lbl[HSM_LABEL_LEN + 1] = {0}; memcpy(lbl, k.label, HSM_LABEL_LEN);
-        printf("  id=%-3u %-8s caps=0x%04x bits=%u exp=%u usage=%u label=\"%s\"\n",
-               k.id, alg_name(k.algorithm), k.capabilities, k.key_bits,
-               k.exportable, k.usage_counter, lbl);
-    }
+    uint16_t offset = 0, total = 0, shown = 0;
+    int header_done = 0;
+    do {
+        hsm_find_req_t rq; memset(&rq, 0, sizeof(rq));
+        rq.offset = offset;            /* {offset, max=0}: no label filter */
+        uint16_t st = cmd(c, HSM_CMD_FIND_OBJECT, (uint8_t *)&rq, 4,
+                          resp, sizeof(resp), &o, &ol);
+        if (st != HSM_OK) { fprintf(stderr, "list: %s\n", status_str(st)); return 1; }
+        hsm_find_resp_t fr; memcpy(&fr, o, sizeof(fr));
+        total = fr.total;
+        if (!header_done) { printf("%u object(s):\n", total); header_done = 1; }
+        const uint8_t *p = o + sizeof(fr);
+        for (int i = 0; i < fr.count; i++) {
+            hsm_obj_info_t k; memcpy(&k, p + i * sizeof(k), sizeof(k));
+            char lbl[HSM_LABEL_LEN + 1] = {0}; memcpy(lbl, k.label, HSM_LABEL_LEN);
+            printf("  id=%-3u %-8s caps=0x%04x bits=%u exp=%u usage=%u label=\"%s\"\n",
+                   k.id, alg_name(k.algorithm), k.capabilities, k.key_bits,
+                   k.exportable, k.usage_counter, lbl);
+        }
+        shown += fr.count;
+        if (fr.count == 0) break;      /* guard against a stuck cursor */
+        offset = fr.next_offset;
+    } while (shown < total);
     return 0;
 }
 static int c_get(ohsm_ctx *c, int ac, char **av)
@@ -370,7 +403,7 @@ static int usage(void)
 {
     fprintf(stderr,
       "openhsm-cli [--addr host:port] [--pin PIN] <command> [args]\n"
-      "  ping | info | selftest | random <n> | list | get <id> | pubkey <id>\n"
+      "  ping | info | selftest | storage | random <n> | list | get <id> | pubkey <id>\n"
       "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
@@ -399,6 +432,7 @@ int main(int argc, char **argv)
     if      (!strcmp(sub, "ping"))     rc = c_ping(c, ac, av);
     else if (!strcmp(sub, "info"))     rc = c_info(c, ac, av);
     else if (!strcmp(sub, "selftest")) rc = c_selftest(c, ac, av);
+    else if (!strcmp(sub, "storage"))  rc = c_storage(c, ac, av);
     else if (!strcmp(sub, "random"))   rc = c_random(c, ac, av);
     else if (!strcmp(sub, "list"))     rc = c_list(c, ac, av);
     else if (!strcmp(sub, "get"))      rc = c_get(c, ac, av);

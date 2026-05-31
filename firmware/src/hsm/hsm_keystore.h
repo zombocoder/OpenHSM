@@ -44,7 +44,15 @@ uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
  *        labels are returned. Writes up to @p max records to @p out.
  * @return number of records written.
  */
-uint16_t HSM_KeyStore_Find(const uint8_t *label, hsm_obj_info_t *out, uint16_t max);
+/**
+ * @brief Find objects, optionally filtered by exact @p label (NULL = all).
+ * @param offset  skip this many matches (paging)
+ * @param out     receives up to @p max records
+ * @param total   if non-NULL, set to the total matching count
+ * @return number of records written to @p out
+ */
+uint16_t HSM_KeyStore_Find(const uint8_t *label, uint16_t offset,
+                           hsm_obj_info_t *out, uint16_t max, uint16_t *total);
 
 /** @brief Fetch one object's metadata by id. @return HSM_OK or error. */
 uint16_t HSM_KeyStore_Get(uint32_t id, hsm_obj_info_t *out);
@@ -92,5 +100,8 @@ uint16_t HSM_KeyStore_Wrap(uint32_t wrap_id, uint32_t target_id,
 uint16_t HSM_KeyStore_Unwrap(uint32_t wrap_id, const uint8_t *blob, uint16_t blob_len,
                              uint16_t caps, uint8_t exportable, uint8_t auth_domain,
                              const uint8_t *label, hsm_obj_info_t *out);
+
+/** @brief Report store capacity and current fill (no secrets). */
+void HSM_KeyStore_StorageInfo(hsm_storage_info_t *out);
 
 #endif /* OPENHSM_HSM_KEYSTORE_H */
