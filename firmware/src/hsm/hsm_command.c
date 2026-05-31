@@ -14,6 +14,7 @@
 #include "hsm_eddsa.h"
 #include "hsm_x25519.h"
 #include "hsm_hash.h"
+#include "hsm_audit.h"
 
 #include <string.h>
 #include "stm32u5xx.h"
@@ -124,7 +125,26 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         uint8_t tries = 0;
         uint16_t st = HSM_KeyStore_Auth(payload, hdr.payload_length, &tries);
         g_authenticated = (st == HSM_OK);
+        HSM_Audit_Log(st == HSM_OK ? HSM_EV_AUTH_OK : HSM_EV_AUTH_FAIL, tries);
         hsm_auth_resp_t ar = { .authenticated = (st == HSM_OK), .tries_left = tries };
+        memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
+        return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
+    }
+
+    case HSM_CMD_SET_PIN: {
+        if (hdr.payload_length < sizeof(hsm_setpin_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_setpin_req_t rq;
+        memcpy(&rq, payload, sizeof(rq));
+        if ((size_t)sizeof(rq) + rq.old_len + rq.new_len > hdr.payload_length) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        const uint8_t *old_pin = payload + sizeof(rq);
+        const uint8_t *new_pin = old_pin + rq.old_len;
+        uint8_t tries = 0;
+        uint16_t st = HSM_KeyStore_SetPin(old_pin, rq.old_len, new_pin, rq.new_len, &tries);
+        hsm_auth_resp_t ar = { .authenticated = 0, .tries_left = tries };
         memcpy(resp + HSM_HEADER_SIZE, &ar, sizeof(ar));
         return build_response(resp, &hdr, st, (uint16_t)sizeof(ar));
     }
@@ -178,6 +198,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         if (st != HSM_OK) {
             return build_response(resp, &hdr, st, 0);
         }
+        HSM_Audit_Log(HSM_EV_KEYGEN, (uint16_t)info.id);
         memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
     }
@@ -218,6 +239,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         hsm_objid_req_t rq;
         memcpy(&rq, payload, sizeof(rq));
         uint16_t st = HSM_KeyStore_Delete(rq.id);
+        if (st == HSM_OK) HSM_Audit_Log(HSM_EV_KEYDEL, (uint16_t)rq.id);
         return build_response(resp, &hdr, st, 0);
     }
 
@@ -275,6 +297,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         HSM_Ed25519_Sign(seed, payload + sizeof(rq), rq.msg_len, sig);
         memset(seed, 0, sizeof(seed));
         HSM_KeyStore_BumpUsage(rq.id);
+        HSM_Audit_Log(HSM_EV_SIGN, (uint16_t)rq.id);
         memcpy(resp + HSM_HEADER_SIZE, sig, sizeof(sig));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(sig));
     }
@@ -307,6 +330,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
             return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
         }
         HSM_KeyStore_BumpUsage(rq.id);
+        HSM_Audit_Log(HSM_EV_HMAC, (uint16_t)rq.id);
         memcpy(resp + HSM_HEADER_SIZE, mac, sizeof(mac));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(mac));
     }
@@ -322,6 +346,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         uint16_t st = HSM_KeyStore_Wrap(rq.wrap_id, rq.target_id,
                                         resp + HSM_HEADER_SIZE, &blob_len);
         if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        HSM_Audit_Log(HSM_EV_WRAP, (uint16_t)rq.target_id);
         return build_response(resp, &hdr, HSM_OK, blob_len);
     }
 
@@ -339,6 +364,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
                                           rq.capabilities, rq.exportable,
                                           rq.auth_domain, rq.label, &info);
         if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        HSM_Audit_Log(HSM_EV_UNWRAP, (uint16_t)info.id);
         memcpy(resp + HSM_HEADER_SIZE, &info, sizeof(info));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
     }
@@ -360,6 +386,7 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         uint16_t st = HSM_KeyStore_Encrypt(rq.key_id, rq.nonce, aad, rq.aad_len,
                                            pt, rq.data_len, ct, tag);
         if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        HSM_Audit_Log(HSM_EV_ENCRYPT, (uint16_t)rq.key_id);
         return build_response(resp, &hdr, HSM_OK, (uint16_t)(rq.data_len + 16));
     }
 
@@ -380,7 +407,31 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         uint16_t st = HSM_KeyStore_Decrypt(rq.key_id, rq.nonce, aad, rq.aad_len,
                                            ct, rq.data_len, tag, pt);
         if (st != HSM_OK) return build_response(resp, &hdr, st, 0);
+        HSM_Audit_Log(HSM_EV_DECRYPT, (uint16_t)rq.key_id);
         return build_response(resp, &hdr, HSM_OK, rq.data_len);
+    }
+
+    case HSM_CMD_GET_AUDIT_LOG: {
+        hsm_auditlog_resp_t hdr_resp;
+        uint16_t fit = (uint16_t)((resp_cap - HSM_HEADER_SIZE - sizeof(hdr_resp))
+                                  / sizeof(hsm_audit_entry_t));
+        uint16_t req_max = fit;
+        if (hdr.payload_length >= sizeof(hsm_auditlog_req_t)) {
+            hsm_auditlog_req_t rq; memcpy(&rq, payload, sizeof(rq));
+            if (rq.max_entries < req_max) req_max = rq.max_entries;
+        }
+        hsm_audit_entry_t entries[64];
+        if (req_max > 64) req_max = 64;
+        uint32_t next = 0;
+        uint16_t n = HSM_Audit_Get(req_max, entries, &next);
+        hdr_resp.count = n;
+        hdr_resp.reserved = 0;
+        hdr_resp.next_seq = next;
+        memcpy(resp + HSM_HEADER_SIZE, &hdr_resp, sizeof(hdr_resp));
+        memcpy(resp + HSM_HEADER_SIZE + sizeof(hdr_resp), entries,
+               n * sizeof(hsm_audit_entry_t));
+        return build_response(resp, &hdr, HSM_OK,
+                              (uint16_t)(sizeof(hdr_resp) + n * sizeof(hsm_audit_entry_t)));
     }
 
     case HSM_CMD_RANDOM: {

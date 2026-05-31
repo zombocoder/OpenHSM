@@ -12,6 +12,7 @@
 #include "hsm_crypto.h"
 #include "hsm_session.h"
 #include "hsm_keystore.h"
+#include "hsm_audit.h"
 
 static void led_init(void)
 {
@@ -89,6 +90,7 @@ int main(void)
     HSM_Crypto_Init();
     HSM_Session_Init();
     HSM_KeyStore_Init();
+    HSM_Audit_Init();
     MX_USB_Device_Init();
 
     uint32_t last_blink = HAL_GetTick();

@@ -1,0 +1,12 @@
+# Keep the Docker build context small: the image only needs
+# host/pkcs11 + firmware/src/hsm (OpenBao is cloned inside the build).
+firmware/vendor/
+**/build/
+host/openbao/data/
+host/openbao/*.log
+host/openbao/init.json
+.git/
+docs/
+**/*.elf
+**/*.bin
+**/*.hex

@@ -56,6 +56,7 @@ typedef enum {
     HSM_CMD_CLOSE_SESSION   = 0x0011,
     HSM_CMD_AUTH            = 0x0012,
     HSM_CMD_SESSION_DATA    = 0x0013,  /* outer command for an encrypted envelope */
+    HSM_CMD_SET_PIN         = 0x0014,  /* change the login PIN (old -> new)     */
     HSM_CMD_GENERATE_KEY    = 0x0020,
     HSM_CMD_IMPORT_WRAPPED  = 0x0021,
     HSM_CMD_EXPORT_WRAPPED  = 0x0022,
@@ -114,6 +115,42 @@ typedef struct __attribute__((packed)) {
     uint8_t nonce[32];        /* sender 256-bit handshake nonce                 */
 } hsm_open_session_t;         /* used for both OPEN_SESSION request and response */
 
+/* ---- Audit log ---- */
+typedef enum {
+    HSM_EV_BOOT      = 1,
+    HSM_EV_AUTH_OK   = 2,
+    HSM_EV_AUTH_FAIL = 3,
+    HSM_EV_KEYGEN    = 4,
+    HSM_EV_KEYDEL    = 5,
+    HSM_EV_SIGN      = 6,
+    HSM_EV_HMAC      = 7,
+    HSM_EV_WRAP      = 8,
+    HSM_EV_UNWRAP    = 9,
+    HSM_EV_ENCRYPT   = 10,
+    HSM_EV_DECRYPT   = 11,
+} hsm_audit_event_t;
+
+/* One audit entry: monotonic seq + event + arg (object id / status) + a
+ * truncated chained HMAC (tamper-evidence). 16 bytes. */
+typedef struct __attribute__((packed)) {
+    uint32_t seq;
+    uint16_t event;
+    uint16_t arg;
+    uint8_t  mac[8];
+} hsm_audit_entry_t;
+
+/* GET_AUDIT_LOG request: max entries to return (most recent first-in-order). */
+typedef struct __attribute__((packed)) {
+    uint16_t max_entries;
+} hsm_auditlog_req_t;
+
+/* GET_AUDIT_LOG response header, followed by `count` hsm_audit_entry_t. */
+typedef struct __attribute__((packed)) {
+    uint16_t count;       /* entries returned                                  */
+    uint16_t reserved;
+    uint32_t next_seq;    /* the seq the next event will use                   */
+} hsm_auditlog_resp_t;
+
 /* ---- Authentication (PIN login) ---- */
 #define HSM_PIN_MAX_TRIES 8u
 #define HSM_PIN_MIN_LEN   4u
@@ -124,6 +161,12 @@ typedef struct __attribute__((packed)) {
     uint8_t authenticated;  /* 1 if login now succeeded                         */
     uint8_t tries_left;     /* remaining attempts before lockout                */
 } hsm_auth_resp_t;
+
+/* SET_PIN request: header then old_pin(old_len) || new_pin(new_len). */
+typedef struct __attribute__((packed)) {
+    uint8_t old_len;
+    uint8_t new_len;
+} hsm_setpin_req_t;
 
 /* ---- Key store ----------------------------------------------------------- */
 

@@ -510,6 +510,75 @@ static void do_aead(libusb_device_handle *h)
            (roundtrip && tamper_rejected) ? "OK" : "FAIL");
 }
 
+/* Send a SET_PIN(old,new); returns the device status. */
+static uint16_t set_pin(libusb_device_handle *h, const char *oldp, const char *newp)
+{
+    uint8_t req[2 + 64]; uint8_t resp[HSM_MAX_MSG]; int rl;
+    req[0] = (uint8_t)strlen(oldp); req[1] = (uint8_t)strlen(newp);
+    memcpy(req + 2, oldp, strlen(oldp));
+    memcpy(req + 2 + strlen(oldp), newp, strlen(newp));
+    if (send_command(h, HSM_CMD_SET_PIN, req, 2 + strlen(oldp) + strlen(newp),
+                     resp, sizeof(resp), &rl) != 0) return HSM_ERR_INTERNAL;
+    hsm_header_t *rh = (hsm_header_t *)resp;
+    return rh->status;
+}
+
+static uint16_t auth_pin(libusb_device_handle *h, const char *pin)
+{
+    uint8_t resp[HSM_MAX_MSG]; int rl;
+    if (send_command(h, HSM_CMD_AUTH, (const uint8_t *)pin, (uint16_t)strlen(pin),
+                     resp, sizeof(resp), &rl) != 0) return HSM_ERR_INTERNAL;
+    return ((hsm_header_t *)resp)->status;
+}
+
+/* Change the PIN to a new value, verify login, then restore the default. */
+static void do_setpin(libusb_device_handle *h)
+{
+    uint16_t s1 = set_pin(h, "123456", "654321");
+    uint16_t a1 = auth_pin(h, "654321");          /* new PIN works */
+    uint16_t s2 = set_pin(h, "654321", "123456");  /* restore default */
+    uint16_t a2 = auth_pin(h, "123456");
+    int ok = (s1 == HSM_OK && a1 == HSM_OK && s2 == HSM_OK && a2 == HSM_OK);
+    printf("PIN   -> change=0x%04x login-new=0x%04x restore=0x%04x login-default=0x%04x  [%s]\n",
+           s1, a1, s2, a2, ok ? "OK" : "FAIL");
+}
+
+static const char *ev_name(uint16_t e)
+{
+    switch (e) {
+    case HSM_EV_BOOT: return "BOOT"; case HSM_EV_AUTH_OK: return "AUTH_OK";
+    case HSM_EV_AUTH_FAIL: return "AUTH_FAIL"; case HSM_EV_KEYGEN: return "KEYGEN";
+    case HSM_EV_KEYDEL: return "KEYDEL"; case HSM_EV_SIGN: return "SIGN";
+    case HSM_EV_HMAC: return "HMAC"; case HSM_EV_WRAP: return "WRAP";
+    case HSM_EV_UNWRAP: return "UNWRAP"; case HSM_EV_ENCRYPT: return "ENCRYPT";
+    case HSM_EV_DECRYPT: return "DECRYPT"; default: return "?";
+    }
+}
+
+/* Read the audit log and verify the sequence is strictly increasing. */
+static void do_audit(libusb_device_handle *h)
+{
+    uint8_t resp[HSM_MAX_MSG]; int rl;
+    hsm_auditlog_req_t rq = { .max_entries = 20 };
+    if (send_command(h, HSM_CMD_GET_AUDIT_LOG, (uint8_t *)&rq, sizeof(rq),
+                     resp, sizeof(resp), &rl) != 0) return;
+    hsm_header_t rh; memcpy(&rh, resp, sizeof(rh));
+    if (rh.status != HSM_OK) { printf("AUDIT -> failed (0x%04x)\n", rh.status); return; }
+    hsm_auditlog_resp_t ar; memcpy(&ar, resp + HSM_HEADER_SIZE, sizeof(ar));
+    const uint8_t *p = resp + HSM_HEADER_SIZE + sizeof(ar);
+    printf("AUDIT -> %u recent entries (next_seq=%u):\n", ar.count, ar.next_seq);
+    uint32_t prev = 0; int mono = 1;
+    for (int i = 0; i < ar.count; i++) {
+        hsm_audit_entry_t e; memcpy(&e, p + i * sizeof(e), sizeof(e));
+        printf("         seq=%-4u %-9s arg=%-4u mac=", e.seq, ev_name(e.event), e.arg);
+        for (int j = 0; j < 4; j++) printf("%02x", e.mac[j]);
+        printf("\n");
+        if (i > 0 && e.seq <= prev) mono = 0;
+        prev = e.seq;
+    }
+    printf("AUDIT -> monotonic seq = %s  [%s]\n", mono ? "yes" : "NO", mono ? "OK" : "FAIL");
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -662,6 +731,12 @@ int main(void)
 
     /* ---- AES-256-GCM encrypt/decrypt with a stored key ---- */
     do_aead(h);
+
+    /* ---- Change PIN (and restore the default) ---- */
+    do_setpin(h);
+
+    /* ---- Audit log (events recorded for the operations above) ---- */
+    do_audit(h);
 
     libusb_release_interface(h, 0);
     libusb_close(h);

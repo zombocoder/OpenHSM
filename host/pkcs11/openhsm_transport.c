@@ -13,8 +13,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <libusb.h>
 #include <sodium.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 #define OPENHSM_VID 0x0483
 #define OPENHSM_PID 0x5750
@@ -27,6 +33,8 @@
 static const char HKDF_INFO[] = "OpenHSM/v1 session keys";
 
 struct ohsm_ctx {
+    /* transport: TCP to openhsm-daemon (sock >= 0) OR direct libusb */
+    int                   sock;       /* -1 = USB mode                          */
     libusb_context       *usb;
     libusb_device_handle *dev;
     int                   claimed;
@@ -38,10 +46,52 @@ struct ohsm_ctx {
     uint8_t   k_d2c[32];
 };
 
-/* Raw bulk exchange of a fully-formed packet. */
+static int io_read_n(int fd, uint8_t *buf, int n)
+{
+    int off = 0;
+    while (off < n) {
+        ssize_t r = read(fd, buf + off, n - off);
+        if (r <= 0) return -1;
+        off += (int)r;
+    }
+    return 0;
+}
+
+static int io_write_n(int fd, const uint8_t *buf, int n)
+{
+    int off = 0;
+    while (off < n) {
+        ssize_t w = write(fd, buf + off, n - off);
+        if (w <= 0) return -1;
+        off += (int)w;
+    }
+    return 0;
+}
+
+/* TCP framing to openhsm-daemon: 4-byte BE length + packet, both ways. */
+static int sock_exchange(ohsm_ctx *c, const uint8_t *out, int out_len,
+                         uint8_t *resp, int resp_cap, int *resp_len)
+{
+    uint8_t lenbe[4] = { (uint8_t)(out_len >> 24), (uint8_t)(out_len >> 16),
+                         (uint8_t)(out_len >> 8), (uint8_t)out_len };
+    if (io_write_n(c->sock, lenbe, 4) != 0) return -1;
+    if (io_write_n(c->sock, out, out_len) != 0) return -1;
+    if (io_read_n(c->sock, lenbe, 4) != 0) return -1;
+    uint32_t rlen = ((uint32_t)lenbe[0] << 24) | ((uint32_t)lenbe[1] << 16) |
+                    ((uint32_t)lenbe[2] << 8) | lenbe[3];
+    if (rlen == 0 || (int)rlen > resp_cap) return -1;
+    if (io_read_n(c->sock, resp, (int)rlen) != 0) return -1;
+    *resp_len = (int)rlen;
+    return 0;
+}
+
+/* Raw exchange of a fully-formed packet (TCP daemon or direct USB). */
 static int send_recv_raw(ohsm_ctx *c, const uint8_t *out, int out_len,
                          uint8_t *resp, int resp_cap, int *resp_len)
 {
+    if (c->sock >= 0) {
+        return sock_exchange(c, out, out_len, resp, resp_cap, resp_len);
+    }
     int transferred = 0;
     int rc = libusb_bulk_transfer(c->dev, EP_OUT, (uint8_t *)out, out_len,
                                   &transferred, TIMEOUT_MS);
@@ -142,19 +192,57 @@ static int establish_session(ohsm_ctx *c)
     return 0;
 }
 
+/* Connect to openhsm-daemon at "host:port" (from OPENHSM_ADDR). */
+static int connect_daemon(const char *addr)
+{
+    char host[256]; int port = 11700;
+    const char *colon = strrchr(addr, ':');
+    if (colon) {
+        size_t hl = (size_t)(colon - addr);
+        if (hl >= sizeof(host)) hl = sizeof(host) - 1;
+        memcpy(host, addr, hl); host[hl] = 0;
+        port = atoi(colon + 1);
+    } else {
+        snprintf(host, sizeof(host), "%s", addr);
+    }
+    char portstr[16]; snprintf(portstr, sizeof(portstr), "%d", port);
+
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == NULL) return -1;
+
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) { freeaddrinfo(res); return -1; }
+    if (connect(fd, res->ai_addr, res->ai_addrlen) != 0) { close(fd); freeaddrinfo(res); return -1; }
+    freeaddrinfo(res);
+    int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    return fd;
+}
+
 ohsm_ctx *ohsm_open(void)
 {
     ohsm_ctx *c = calloc(1, sizeof(*c));
     if (c == NULL) return NULL;
+    c->sock = -1;
     if (sodium_init() < 0 || !crypto_aead_aes256gcm_is_available()) { free(c); return NULL; }
 
-    if (libusb_init(&c->usb) != 0) { free(c); return NULL; }
-    c->dev = libusb_open_device_with_vid_pid(c->usb, OPENHSM_VID, OPENHSM_PID);
-    if (c->dev == NULL) { libusb_exit(c->usb); free(c); return NULL; }
-    if (libusb_claim_interface(c->dev, 0) != 0) {
-        libusb_close(c->dev); libusb_exit(c->usb); free(c); return NULL;
+    const char *addr = getenv("OPENHSM_ADDR");
+    if (addr && *addr) {
+        /* Network transport via openhsm-daemon (containers / remote / k8s). */
+        c->sock = connect_daemon(addr);
+        if (c->sock < 0) { free(c); return NULL; }
+    } else {
+        /* Direct USB transport. */
+        if (libusb_init(&c->usb) != 0) { free(c); return NULL; }
+        c->dev = libusb_open_device_with_vid_pid(c->usb, OPENHSM_VID, OPENHSM_PID);
+        if (c->dev == NULL) { libusb_exit(c->usb); free(c); return NULL; }
+        if (libusb_claim_interface(c->dev, 0) != 0) {
+            libusb_close(c->dev); libusb_exit(c->usb); free(c); return NULL;
+        }
+        c->claimed = 1;
     }
-    c->claimed = 1;
     establish_session(c);  /* best-effort; plaintext fallback if it fails */
     if (getenv("OPENHSM_DEBUG")) {
         if (c->session_ok)
@@ -180,6 +268,7 @@ void ohsm_close(ohsm_ctx *c)
         sodium_memzero(c->k_c2d, sizeof(c->k_c2d));
         sodium_memzero(c->k_d2c, sizeof(c->k_d2c));
     }
+    if (c->sock >= 0) close(c->sock);
     if (c->claimed) libusb_release_interface(c->dev, 0);
     if (c->dev) libusb_close(c->dev);
     if (c->usb) libusb_exit(c->usb);

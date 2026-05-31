@@ -19,6 +19,21 @@ void HSM_KeyStore_Init(void);
 uint16_t HSM_KeyStore_Auth(const uint8_t *pin, uint16_t len, uint8_t *tries_left);
 
 /**
+ * @brief Change the PIN: verify @p old_pin, then install @p new_pin (fresh
+ *        salt, retry counter reset). @return HSM_OK / LOCKED / NOT_AUTHORIZED /
+ *        INVALID_PARAM (bad new length). *tries_left updated.
+ */
+uint16_t HSM_KeyStore_SetPin(const uint8_t *old_pin, uint16_t old_len,
+                             const uint8_t *new_pin, uint16_t new_len,
+                             uint8_t *tries_left);
+
+/** @brief Reserve a block of audit sequence numbers (persisted). @return base. */
+uint32_t HSM_KeyStore_ReserveAudit(uint32_t count);
+
+/** @brief Derive the audit chain key from the KEK. */
+void HSM_KeyStore_AuditKey(uint8_t out[32]);
+
+/**
  * @brief Generate a new random key, encrypt it under the KEK, persist it.
  * @return HSM_OK or an hsm_status_t error.
  */

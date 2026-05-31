@@ -352,6 +352,34 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
     return CKR_OK;
 }
 
+/* Change the PIN: forwards old+new to the device SET_PIN command. */
+CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOld, CK_ULONG oldLen,
+               CK_UTF8CHAR_PTR pNew, CK_ULONG newLen)
+{
+    if (!g_initialized) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (session_of(hSession) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    if (pOld == NULL || pNew == NULL || oldLen > 32 || newLen > 32)
+        return CKR_PIN_LEN_RANGE;
+
+    uint8_t req[2 + 64];
+    req[0] = (uint8_t)oldLen;
+    req[1] = (uint8_t)newLen;
+    memcpy(req + 2, pOld, oldLen);
+    memcpy(req + 2 + oldLen, pNew, newLen);
+
+    uint8_t resp[HSM_MAX_MSG]; int rl = 0;
+    if (ohsm_cmd(g_ctx, HSM_CMD_SET_PIN, req, (uint16_t)(2 + oldLen + newLen),
+                 resp, sizeof(resp), &rl) != 0) return CKR_DEVICE_ERROR;
+    hsm_header_t *rh = (hsm_header_t *)resp;
+    switch (rh->status) {
+    case HSM_OK:                 return CKR_OK;
+    case HSM_ERR_LOCKED:         return CKR_PIN_LOCKED;
+    case HSM_ERR_NOT_AUTHORIZED: return CKR_PIN_INCORRECT;
+    case HSM_ERR_INVALID_PARAM:  return CKR_PIN_LEN_RANGE;
+    default:                     return CKR_FUNCTION_FAILED;
+    }
+}
+
 /* ===========================================================================
  *  Object search + attributes
  * ===========================================================================*/
@@ -807,6 +835,7 @@ static CK_FUNCTION_LIST function_list = {
     .C_GetSessionInfo    = C_GetSessionInfo,
     .C_Login             = C_Login,
     .C_Logout            = C_Logout,
+    .C_SetPIN            = C_SetPIN,
     .C_FindObjectsInit   = C_FindObjectsInit,
     .C_FindObjects       = C_FindObjects,
     .C_FindObjectsFinal  = C_FindObjectsFinal,

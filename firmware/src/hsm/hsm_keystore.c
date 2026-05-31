@@ -28,7 +28,7 @@
 
 #define STORE_MAGIC 0x4F485354u  /* "OHST" */
 #define SLOT_MAGIC  0x4F484B31u  /* "OHK1" */
-#define STORE_VERSION 7u  /* added PIN auth state to the store header */
+#define STORE_VERSION 8u  /* added audit_seq to the store header */
 #define KEY_BLOB_MAX 64u
 
 /* One object slot (160 bytes, multiple of the 16-byte flash quad-word). */
@@ -71,6 +71,7 @@ typedef struct __attribute__((packed)) {
     uint8_t   pin_reserved[2];
     uint8_t   pin_salt[16];
     uint8_t   pin_hash[32];       /* HMAC-SHA256(pin_salt, PIN)                 */
+    uint32_t  audit_seq;          /* persisted high-water for the audit counter */
     keyslot_t slots[HSM_MAX_OBJECTS];
 } store_t;
 
@@ -164,6 +165,37 @@ uint16_t HSM_KeyStore_Auth(const uint8_t *pin, uint16_t len, uint8_t *tries_left
     persist();
     *tries_left = store.pin_tries;
     return (store.pin_tries == 0) ? HSM_ERR_LOCKED : HSM_ERR_NOT_AUTHORIZED;
+}
+
+uint16_t HSM_KeyStore_SetPin(const uint8_t *old_pin, uint16_t old_len,
+                             const uint8_t *new_pin, uint16_t new_len,
+                             uint8_t *tries_left)
+{
+    if (store.pin_tries == 0) { *tries_left = 0; return HSM_ERR_LOCKED; }
+    if (new_len < HSM_PIN_MIN_LEN || new_len > HSM_PIN_MAX_LEN) {
+        *tries_left = store.pin_tries;
+        return HSM_ERR_INVALID_PARAM;
+    }
+
+    /* Verify the current PIN (consumes a try on mismatch, like AUTH). */
+    uint8_t h[32];
+    compute_pin_hash(store.pin_salt, old_pin, old_len, h);
+    uint8_t diff = 0;
+    for (int i = 0; i < 32; i++) diff |= (uint8_t)(h[i] ^ store.pin_hash[i]);
+    if (diff != 0) {
+        store.pin_tries--;
+        persist();
+        *tries_left = store.pin_tries;
+        return (store.pin_tries == 0) ? HSM_ERR_LOCKED : HSM_ERR_NOT_AUTHORIZED;
+    }
+
+    /* Install the new PIN with a fresh salt; reset the retry counter. */
+    HSM_Rng_Fill(store.pin_salt, sizeof(store.pin_salt));
+    compute_pin_hash(store.pin_salt, new_pin, new_len, store.pin_hash);
+    store.pin_tries = HSM_PIN_MAX_TRIES;
+    persist();
+    *tries_left = store.pin_tries;
+    return HSM_OK;
 }
 
 static keyslot_t *find_slot(uint32_t id)
@@ -324,6 +356,20 @@ void HSM_KeyStore_BumpUsage(uint32_t id)
 {
     keyslot_t *s = find_slot(id);
     if (s != NULL) s->usage_counter++;
+}
+
+uint32_t HSM_KeyStore_ReserveAudit(uint32_t count)
+{
+    uint32_t base = store.audit_seq;
+    store.audit_seq += count;
+    persist();              /* durably reserve the block before it is used */
+    return base;
+}
+
+void HSM_KeyStore_AuditKey(uint8_t out[32])
+{
+    HSM_HkdfSha256((const uint8_t *)"OpenHSM-AUDIT-v1", 16, kek, sizeof(kek),
+                   NULL, 0, out, 32);
 }
 
 uint16_t HSM_KeyStore_Encrypt(uint32_t id, const uint8_t nonce[12],
