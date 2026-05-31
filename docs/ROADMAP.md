@@ -75,12 +75,17 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ⬜ Authenticated session handshake (device cert) — depends on D.
 
 ### G. PKCS#11 provider robustness (host, production-relevant)
-- ⬜ **NULL-safety**: fill all unimplemented `CK_FUNCTION_LIST` slots with stubs
-  returning `CKR_FUNCTION_NOT_SUPPORTED` (a consumer calling a NULL slot crashes).
-- ⬜ **Thread safety**: honor `CKF_OS_LOCKING_OK` / add a mutex around the single
-  transport (Vault/OpenBao are multi-threaded).
-- ⬜ `C_DestroyObject` (device DELETE exists), `C_Verify`, multi-part crypto
-  (`*Update`/`*Final`), `C_WrapKey`/`C_UnwrapKey`, fuller `C_GetAttributeValue`.
+- ✅ **Thread safety**: a global mutex serializes every device exchange (the
+  single secure-session transport) and the session table — Vault/OpenBao are
+  multi-threaded. (Library does native locking regardless of `CKF_OS_LOCKING_OK`.)
+- ✅ `C_DestroyObject` (maps to device DELETE; bad handle → `CKR_OBJECT_HANDLE_INVALID`),
+  `C_VerifyInit`/`C_Verify` (HMAC recompute + constant-time compare; EdDSA via
+  local libsodium public-key check). Init/NULL-arg guards added across crypto ops.
+- 🟡 **NULL-safety**: implemented slots guard init/args; remaining unimplemented
+  `CK_FUNCTION_LIST` slots are NULL (most consumers tolerate this, but stubs
+  returning `CKR_FUNCTION_NOT_SUPPORTED` would be safer).
+- ⬜ Multi-part crypto (`*Update`/`*Final`), `C_WrapKey`/`C_UnwrapKey`,
+  fuller `C_GetAttributeValue`.
 
 ### H. Reliability & quality
 - ⬜ **Watchdog** (IWDG) + safe recovery; brownout reset handling.
