@@ -19,7 +19,7 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ Encrypted key store in flash, HUK→KEK→objects, wrapped-export-only (§9-10)
 - ✅ Key ops: GENERATE/FIND/GET/DELETE, SIGN, HMAC, GET_PUBLIC, WRAP/UNWRAP, ENCRYPT/DECRYPT (§11,15)
 - ✅ PIN auth: login, retry counter, persistent lockout, SET_PIN (§16)
-- ✅ Audit log: append-only, monotonic counter, chained-HMAC tamper-evidence (§17, partial — see below)
+- ✅ Audit log: append-only, monotonic counter, chained-HMAC tamper-evidence, durable in flash (§17)
 - ✅ PKCS#11 provider + OpenBao auto-unseal, incl. encrypted/PIN transport (§12-13,25)
 - ✅ Network transport (openhsm-daemon, USB↔TCP) for containers/k8s (§21,23 partial)
 - ✅ Tooling: openhsm-cli (maintenance/debug + `bench`/`storage`), openhsm-ssh-agent
@@ -57,9 +57,22 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ⬜ Inject device certificate (enables authenticated handshake, kills MITM).
 
 ### E. Key store / audit durability & correctness
-- 🟡 **Durable audit log**: persist the full entry stream (dedicated flash log
-  region / external sink), not just the monotonic counter (today entries are a
-  RAM ring; only the counter survives reboot).
+- ✅ **Durable audit log**: entries persist to a 2-page bank-2 flash ring
+  (pages 125-126, 1024 × 16-byte entries), appended one quad-word at a time;
+  on returning to a page we erase only that page, so a rolling window of the
+  ~512-1024 most recent entries always survives (no erase-everything sawtooth).
+  At boot the ring is scanned to recover the chain tail (prev_mac) + write
+  position and rebuild the readout ring. Verified on hardware: ~2400 events
+  (>2 ring laps via `bench`) then a reboot — recent entries, the HMAC chain and
+  the monotonic seq all survive cleanly. Every SIGN/HMAC/WRAP/UNWRAP/ENCRYPT/
+  DECRYPT/AUTH/KEYGEN/KEYDEL/SET_PIN is logged; per-op flash write costs ~25%
+  throughput (bench still PASS) and a page erase ~every 512 events.
+  `GET_AUDIT_LOG` is **paginated** (`offset`/`total`/`next_offset`) and reads
+  straight from flash, sorted oldest-first by seq — `openhsm-cli audit [n|all]`
+  walks the pages, so the full durable log (verified: 805 entries, strictly
+  monotonic, no boundary dups) is readable, not just the last ~31.
+  Remaining: host-side chain-verification tooling (auditor holding the key);
+  optionally persist only security events (not every crypto op) to cut flash wear.
 - ✅ **Store capacity**: `HSM_MAX_OBJECTS=32`, `FIND_OBJECT` paged
   (`offset`/`total`/`next_offset`), `GET_STORAGE` reports fill. The 8 KB page
   physically holds ~50 slots; raising the limit further is a one-line change.

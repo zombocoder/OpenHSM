@@ -376,21 +376,45 @@ static int c_unwrap(ohsm_ctx *c, int ac, char **av)
     printf("unwrapped id=%u %s label=\"%s\"\n", k.id, alg_name(k.algorithm), av[1]);
     return 0;
 }
+/* Fetch one page of the audit log. Returns device status; sets resp fields. */
+static uint16_t audit_page(ohsm_ctx *c, uint16_t offset, hsm_auditlog_resp_t *ar,
+                           hsm_audit_entry_t *out, uint8_t *resp, int cap)
+{
+    hsm_auditlog_req_t rq = { .offset = offset, .max_entries = 0 };  /* 0 = page full */
+    const uint8_t *o; int ol;
+    uint16_t st = cmd(c, HSM_CMD_GET_AUDIT_LOG, (uint8_t *)&rq, sizeof(rq), resp, cap, &o, &ol);
+    if (st != HSM_OK) return st;
+    memcpy(ar, o, sizeof(*ar));
+    memcpy(out, o + sizeof(*ar), ar->count * sizeof(hsm_audit_entry_t));
+    return HSM_OK;
+}
+
 static int c_audit(ohsm_ctx *c, int ac, char **av)
 {
-    uint16_t max = (uint16_t)(ac >= 1 ? atoi(av[0]) : 20);
-    hsm_auditlog_req_t rq = { .max_entries = max };
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
-    uint16_t st = cmd(c, HSM_CMD_GET_AUDIT_LOG, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol);
+    int want_all = (ac >= 1 && strcmp(av[0], "all") == 0);
+    uint32_t n = want_all ? 0 : (uint32_t)(ac >= 1 ? strtoul(av[0], NULL, 0) : 20);
+
+    uint8_t resp[HSM_MAX_MSG]; hsm_auditlog_resp_t ar; hsm_audit_entry_t ent[32];
+    /* Probe for total / next_seq. */
+    uint16_t st = audit_page(c, 0, &ar, ent, resp, sizeof(resp));
     if (st != HSM_OK) { fprintf(stderr, "audit: %s\n", status_str(st)); return 1; }
-    hsm_auditlog_resp_t ar; memcpy(&ar, o, sizeof(ar));
-    const uint8_t *p = o + sizeof(ar);
-    printf("%u entries (next_seq=%u):\n", ar.count, ar.next_seq);
-    for (int i = 0; i < ar.count; i++) {
-        hsm_audit_entry_t e; memcpy(&e, p + i * sizeof(e), sizeof(e));
-        printf("  seq=%-5u %-9s arg=%-4u mac=", e.seq, ev_name(e.event), e.arg);
-        for (int j = 0; j < 4; j++) printf("%02x", e.mac[j]);
-        printf("\n");
+    uint16_t total = ar.total;
+    uint16_t start = (want_all || total <= n) ? 0 : (uint16_t)(total - n);
+
+    printf("%u of %u durable entries (next_seq=%u):\n",
+           want_all ? total : (uint16_t)(total - start), total, ar.next_seq);
+
+    uint16_t offset = start;
+    while (offset < total) {
+        st = audit_page(c, offset, &ar, ent, resp, sizeof(resp));
+        if (st != HSM_OK) { fprintf(stderr, "audit: %s\n", status_str(st)); return 1; }
+        if (ar.count == 0) break;
+        for (int i = 0; i < ar.count; i++) {
+            printf("  seq=%-6u %-9s arg=%-4u mac=", ent[i].seq, ev_name(ent[i].event), ent[i].arg);
+            for (int j = 0; j < 4; j++) printf("%02x", ent[i].mac[j]);
+            printf("\n");
+        }
+        offset = ar.next_offset;
     }
     return 0;
 }
@@ -493,7 +517,7 @@ static int usage(void)
       "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
-      "  audit [n] | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
+      "  audit [n|all] | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }

@@ -142,14 +142,18 @@ typedef struct __attribute__((packed)) {
     uint8_t  mac[8];
 } hsm_audit_entry_t;
 
-/* GET_AUDIT_LOG request: max entries to return (most recent first-in-order). */
+/* GET_AUDIT_LOG request: a page of the durable log, oldest-first by seq.
+ * Empty payload = page 0. Page through `offset` until next_offset == total. */
 typedef struct __attribute__((packed)) {
-    uint16_t max_entries;
+    uint16_t offset;       /* skip this many (oldest-first)                     */
+    uint16_t max_entries;  /* cap on entries to return (0 = as many as fit)     */
 } hsm_auditlog_req_t;
 
 /* GET_AUDIT_LOG response header, followed by `count` hsm_audit_entry_t. */
 typedef struct __attribute__((packed)) {
-    uint16_t count;       /* entries returned                                  */
+    uint16_t count;       /* entries in THIS response                           */
+    uint16_t total;       /* total entries durably stored                      */
+    uint16_t next_offset; /* offset for the next page; == total when done       */
     uint16_t reserved;
     uint32_t next_seq;    /* the seq the next event will use                   */
 } hsm_auditlog_resp_t;

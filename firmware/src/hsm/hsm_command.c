@@ -431,18 +431,22 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         hsm_auditlog_resp_t hdr_resp;
         uint16_t fit = (uint16_t)((resp_cap - HSM_HEADER_SIZE - sizeof(hdr_resp))
                                   / sizeof(hsm_audit_entry_t));
-        uint16_t req_max = fit;
+        uint16_t offset = 0, req_max = fit;
         if (hdr.payload_length >= sizeof(hsm_auditlog_req_t)) {
             hsm_auditlog_req_t rq; memcpy(&rq, payload, sizeof(rq));
-            if (rq.max_entries < req_max) req_max = rq.max_entries;
+            offset = rq.offset;
+            if (rq.max_entries != 0 && rq.max_entries < req_max) req_max = rq.max_entries;
         }
-        hsm_audit_entry_t entries[64];
-        if (req_max > 64) req_max = 64;
+        hsm_audit_entry_t entries[32];
+        if (req_max > 32) req_max = 32;
+        uint16_t total = 0;
         uint32_t next = 0;
-        uint16_t n = HSM_Audit_Get(req_max, entries, &next);
-        hdr_resp.count = n;
-        hdr_resp.reserved = 0;
-        hdr_resp.next_seq = next;
+        uint16_t n = HSM_Audit_GetFlash(offset, req_max, entries, &total, &next);
+        hdr_resp.count       = n;
+        hdr_resp.total       = total;
+        hdr_resp.next_offset = (uint16_t)(offset + n);
+        hdr_resp.reserved    = 0;
+        hdr_resp.next_seq    = next;
         memcpy(resp + HSM_HEADER_SIZE, &hdr_resp, sizeof(hdr_resp));
         memcpy(resp + HSM_HEADER_SIZE + sizeof(hdr_resp), entries,
                n * sizeof(hsm_audit_entry_t));

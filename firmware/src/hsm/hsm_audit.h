@@ -16,9 +16,14 @@ void HSM_Audit_Init(void);
 void HSM_Audit_Log(uint16_t event, uint16_t arg);
 
 /**
- * @brief Copy up to @p max of the most recent entries (oldest-first order)
- *        into @p out. @return number copied; *next_seq = next seq to be used.
+ * @brief Read a page of the durable (flash) log in oldest-first seq order.
+ * @param offset   skip this many entries
+ * @param max      max entries to copy into @p out
+ * @param total    if non-NULL, set to the total durable entry count
+ * @param next_seq if non-NULL, set to the seq the next event will use
+ * @return number copied into @p out
  */
-uint16_t HSM_Audit_Get(uint16_t max, hsm_audit_entry_t *out, uint32_t *next_seq);
+uint16_t HSM_Audit_GetFlash(uint16_t offset, uint16_t max, hsm_audit_entry_t *out,
+                            uint16_t *total, uint32_t *next_seq);
 
 #endif /* OPENHSM_HSM_AUDIT_H */
