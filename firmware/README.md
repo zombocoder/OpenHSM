@@ -54,19 +54,42 @@ cmake --build build -j
 
 Outputs: `build/openhsm.elf`, `build/openhsm.bin`, `build/openhsm.hex`.
 
+## Secure boot
+
+The flashed image is **two stages**: a stage-1 bootloader at `0x08000000` that
+verifies an **Ed25519** signature over the application (relinked to `0x08012000`)
+against a baked-in vendor public key, then jumps to it. A monotonic per-image
+version provides **anti-rollback** (high-water version stored in bank-2 page 124;
+older images are refused). Layout: BL `0x08000000` (64 KB), signed header
+`0x08010000` (8 KB), app `0x08012000`. See `bootloader/`, `tools/sign_image.c`,
+and `linker/STM32U585xx_{bl,app}.ld`.
+
+**One-time:** generate the vendor signing key (writes `keys/vendor_ed25519.seed`,
+gitignored, and `bootloader/vendor_pubkey.h`):
+```sh
+cmake --build build --target keygen
+```
+Build the host signing tool once: `cc tools/sign_image.c -lsodium -o tools/sign_image`.
+
 ## Flash (DFU, no debugger needed)
 
 1. Put the board in the **system bootloader**: hold **BOOT0 = high** and tap
    **RESET** (release RESET first, then BOOT0). It should appear as
    `0483:df11 STM32 BOOTLOADER` — check with `dfu-util -l`.
-2. Flash:
+2. Flash the combined, signed image:
    ```sh
    cmake --build build --target flash
-   # = dfu-util -a 0 -s 0x08000000:leave -D build/openhsm.bin
+   # signs (auto version = epoch) -> build/openhsm_signed.bin, then
+   # dfu-util -a 0 -s 0x08000000:leave -D build/openhsm_signed.bin
    ```
-   `:leave` resets into the application after programming.
-3. With BOOT0 back to low, the firmware runs and enumerates as
-   `0483:5750 OpenHSM Token`.
+   The version auto-increments (Unix epoch via `tools/sign_flash.sh`) so it always
+   satisfies anti-rollback. `:leave` resets into the bootloader → app.
+3. With BOOT0 back to low, the bootloader verifies + runs the app, which
+   enumerates as `0483:5750 OpenHSM Token`.
+
+> Recovery: a bad/incompatible image just makes the bootloader halt (PA1 blinks);
+> re-enter BOOT0+DFU and flash a good `openhsm_signed.bin`. No option bytes are
+> touched, so the board cannot be bricked here.
 
 ## Test the round-trip
 

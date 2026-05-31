@@ -1,0 +1,4 @@
+build/
+keys/*.seed
+tools/sign_image
+tools/gen_vectors

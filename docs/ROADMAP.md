@@ -24,19 +24,30 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ Network transport (openhsm-daemon, USB↔TCP) for containers/k8s (§21,23 partial)
 - ✅ Tooling: openhsm-cli (maintenance/debug + `bench`/`storage`), openhsm-ssh-agent
   (SSH login with a device-held Ed25519 key — verified end-to-end into a container)
+- ✅ Secure boot: stage-1 Ed25519-verifying bootloader + anti-rollback (§8,§19;
+  software chain — HW root of trust / RDP-2 deferred to D)
 
 ---
 
 ## Remaining for production-ready
 
 ### A. Secure boot & firmware lifecycle (§8, §19)
-- ⬜ **Signed firmware** (Ed25519): build-time signing + a verifying bootloader.
-- ⬜ **Anti-rollback**: monotonic firmware version (option-byte / secure counter),
-  reject downgrades.
-- ⬜ **Secure firmware update** over the USB session: signed + version-checked.
-- ⚠️ Enabling the STM32 ROM secure-boot / RDP boot chain is irreversible-ish and
-  removes plain DFU; do the signing/verify infrastructure first (safe), gate the
-  ROM enablement for a provisioning/sacrificial board.
+- ✅ **Signed firmware** (Ed25519): a stage-1 bootloader at 0x08000000 verifies an
+  Ed25519 signature over the app (relinked to 0x08012000) against a baked-in vendor
+  public key before jumping; host `tools/sign_image` (libsodium) signs and assembles
+  the combined image, `make flash` flashes it. Verified on hardware: valid image
+  boots; tampered byte and wrong-key images are both rejected (no boot); BOOT0+DFU
+  recovers.
+- ✅ **Anti-rollback**: monotonic version in the header; bootloader stores a
+  high-water version in a free bank-2 page (124) and refuses anything below it.
+  `make flash` auto-versions with the Unix epoch (tools/sign_flash.sh) so it is
+  always monotonic. Verified on hardware: v1→v2 boot, v1 downgrade rejected.
+- ⬜ **Secure firmware update** over the USB session (signed + version-checked) —
+  today updates go through BOOT0+DFU; an in-session update path is future.
+- ⚠️ **Hardware root of trust** (RDP-2 + WRP on the bootloader, disable DFU) is the
+  irreversible manufacturing step (ROADMAP D) — NOT done here, so an attacker who
+  can DFU-flash can still replace the bootloader itself. The signing/verify
+  infrastructure above is the safe, reversible prerequisite.
 
 ### B. TrustZone isolation (§7)
 - ⬜ Split into Secure / Non-secure worlds: keys, KEK, crypto, PIN, audit,
