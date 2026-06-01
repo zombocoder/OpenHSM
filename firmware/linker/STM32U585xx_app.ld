@@ -145,7 +145,20 @@ SECTIONS
 
     . = ALIGN(8);
     _edata = .;        /* define a global symbol at data end */
-    
+
+  } >RAM AT> ROM
+
+  /* RAM-resident code section (empty in the app; present so the shared startup's
+   * copy loop links — only the bootloader puts code here). */
+  _siramfunc = LOADADDR(.ramfunc);
+  .ramfunc :
+  {
+    . = ALIGN(8);
+    _sramfunc = .;
+    *(.ramfunc)
+    *(.ramfunc*)
+    . = ALIGN(8);
+    _eramfunc = .;
   } >RAM AT> ROM
 
   /* Uninitialized data section into "RAM" Ram type memory */

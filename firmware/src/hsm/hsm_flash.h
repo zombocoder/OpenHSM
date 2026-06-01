@@ -27,6 +27,16 @@
 #define OPENHSM_AUDIT_PAGE_SLOTS 512u     /* 16-byte entries per 8 KB page */
 #define OPENHSM_AUDIT_SLOTS  (OPENHSM_AUDIT_PAGES * OPENHSM_AUDIT_PAGE_SLOTS)  /* 1024 */
 
+/* Secure firmware update (shared with the bootloader). The running app stages a
+ * new signed image (header+app) here in bank 2, sets the control word, and
+ * resets; the bootloader verifies + applies it to the bank-1 app region. */
+#define OPENHSM_STAGE_ADDR   0x08100000u  /* bank 2, page 0 */
+#define OPENHSM_STAGE_PAGES  32u           /* 256 KB staging window */
+#define OPENHSM_STAGE_SIZE   (OPENHSM_STAGE_PAGES * 0x2000u)
+#define OPENHSM_FWCTL_ADDR   0x081F6000u  /* bank 2, page 123: pending-update control */
+#define OPENHSM_FWCTL_PAGE   123u
+#define OPENHSM_FWCTL_MAGIC  0x4F485550u  /* "OHUP" */
+
 /** @brief Copy @p len bytes from store offset @p off into @p dst (mapped read). */
 void HSM_Flash_Read(uint32_t off, void *dst, size_t len);
 
@@ -47,5 +57,16 @@ int HSM_Flash_AuditWrite(uint32_t index, const void *src16);
 
 /** @brief Erase audit page ordinal @p page_ord (0..OPENHSM_AUDIT_PAGES-1). */
 int HSM_Flash_AuditErasePage(uint32_t page_ord);
+
+/* ---- Firmware-update staging (bank 2; app-side, cross-bank writes) ---- */
+
+/** @brief Erase the staging pages needed to hold @p total_len bytes. @return 0 ok. */
+int HSM_Flash_StageErase(uint32_t total_len);
+
+/** @brief Program @p len bytes (16-aligned) into staging at @p offset. @return 0 ok. */
+int HSM_Flash_StageWrite(uint32_t offset, const uint8_t *src, uint32_t len);
+
+/** @brief Write the pending-update control word {magic,total_len}. @return 0 ok. */
+int HSM_Flash_SetPending(uint32_t total_len);
 
 #endif /* OPENHSM_HSM_FLASH_H */

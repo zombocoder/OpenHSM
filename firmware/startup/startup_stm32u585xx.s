@@ -91,6 +91,21 @@ LoopFillZerobss:
 	cmp	r2, r3
 	bcc	FillZerobss
 
+/* Copy .ramfunc from flash (LMA) to RAM (VMA). Empty (no-op) in the app build. */
+	ldr	r0, =_sramfunc
+	ldr	r1, =_eramfunc
+	ldr	r2, =_siramfunc
+	movs	r3, #0
+LoopCopyRamfunc:
+	adds	r4, r0, r3
+	cmp	r4, r1
+	bcs	DoneCopyRamfunc
+	ldr	r5, [r2, r3]
+	str	r5, [r4]
+	adds	r3, r3, #4
+	b	LoopCopyRamfunc
+DoneCopyRamfunc:
+
 /* Call static constructors */
     bl __libc_init_array
 /* Call the application's entry point.*/

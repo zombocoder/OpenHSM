@@ -47,8 +47,15 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   high-water version in a free bank-2 page (124) and refuses anything below it.
   `make flash` auto-versions with the Unix epoch (tools/sign_flash.sh) so it is
   always monotonic. Verified on hardware: v1→v2 boot, v1 downgrade rejected.
-- ⬜ **Secure firmware update** over the USB session (signed + version-checked) —
-  today updates go through BOOT0+DFU; an in-session update path is future.
+- ✅ **Secure firmware update** over the USB session — gated FW_UPDATE_BEGIN/DATA/
+  APPLY (0x0060-62) stream a signed app image into a bank-2 staging region; the
+  bootloader verifies it (Ed25519 + anti-rollback) and applies it to the bank-1
+  app region via a RAM-resident flash routine (cross-bank rule), then boots.
+  `openhsm-cli fwupdate openhsm_signed.bin`. Power-loss-safe (control flag cleared
+  only after programming → interrupted apply retries from staging). Verified on
+  hardware: fw 0.1→0.2 pushed over USB **with no DFU**; old-version and
+  tampered-byte images both rejected (device keeps the running app); keys persist.
+  Limit: the bootloader itself is not self-updatable (BL changes still via DFU).
 - ⚠️ **Hardware root of trust** (RDP-2 + WRP on the bootloader, disable DFU) is the
   irreversible manufacturing step (ROADMAP D) — NOT done here, so an attacker who
   can DFU-flash can still replace the bootloader itself. The signing/verify

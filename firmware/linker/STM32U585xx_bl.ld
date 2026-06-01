@@ -145,7 +145,19 @@ SECTIONS
 
     . = ALIGN(8);
     _edata = .;        /* define a global symbol at data end */
-    
+
+  } >RAM AT> ROM
+
+  /* RAM-resident code (flash_apply): executes from RAM, loaded from ROM. */
+  _siramfunc = LOADADDR(.ramfunc);
+  .ramfunc :
+  {
+    . = ALIGN(8);
+    _sramfunc = .;
+    *(.ramfunc)
+    *(.ramfunc*)
+    . = ALIGN(8);
+    _eramfunc = .;
   } >RAM AT> ROM
 
   /* Uninitialized data section into "RAM" Ram type memory */

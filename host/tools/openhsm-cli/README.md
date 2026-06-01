@@ -40,6 +40,7 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 | `initpin <pin>` | set the first PIN on a fresh (unprovisioned) device |
 | `setpin <old> <new>` | change the login PIN |
 | `bench [seconds] [payload]` | throughput benchmark (AES-GCM, HMAC) vs spec §20 targets |
+| `fwupdate <openhsm_signed.bin>` | push a signed firmware image over USB; bootloader verifies + applies on reset (no DFU) |
 
 ## Examples
 ```sh

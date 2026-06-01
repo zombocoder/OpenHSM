@@ -74,6 +74,9 @@ typedef enum {
     HSM_CMD_DECRYPT         = 0x0042,
     HSM_CMD_GET_AUDIT_LOG   = 0x0050,
     HSM_CMD_GET_STORAGE     = 0x0051,  /* key-store capacity & fill level       */
+    HSM_CMD_FW_UPDATE_BEGIN = 0x0060,  /* stage a signed app image: erase staging */
+    HSM_CMD_FW_UPDATE_DATA  = 0x0061,  /* write a chunk into staging at offset    */
+    HSM_CMD_FW_UPDATE_APPLY = 0x0062,  /* mark pending + reset; bootloader applies */
 } hsm_command_t;
 
 /* Response status codes. */
@@ -341,6 +344,15 @@ typedef struct __attribute__((packed)) {
     uint32_t region_size;      /* persistent flash region size (bytes)          */
     uint32_t store_bytes;      /* bytes the store structure occupies            */
 } hsm_storage_info_t;
+
+/* ---- Secure firmware update ----
+ * BEGIN request: total bytes (header+app) that will be staged. Response =
+ * hsm_fwbegin_resp_t. DATA request: offset then the chunk bytes (16-aligned).
+ * APPLY request: total bytes (sanity), then the device resets without replying. */
+typedef struct __attribute__((packed)) { uint32_t total_len; } hsm_fwbegin_req_t;
+typedef struct __attribute__((packed)) { uint16_t max_chunk;  } hsm_fwbegin_resp_t;
+typedef struct __attribute__((packed)) { uint32_t offset; /* data follows */ } hsm_fwdata_req_t;
+typedef struct __attribute__((packed)) { uint32_t total_len; } hsm_fwapply_req_t;
 
 /* Magic the PING command echoes back, to prove a live round-trip. */
 #define HSM_PING_MAGIC           0x4F48534Du /* "OHSM" */

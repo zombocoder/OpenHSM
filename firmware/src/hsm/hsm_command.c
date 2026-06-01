@@ -11,6 +11,7 @@
 #include "hsm_crypto.h"
 #include "hsm_session.h"
 #include "hsm_keystore.h"
+#include "hsm_flash.h"
 #include "hsm_eddsa.h"
 #include "hsm_ecdsa_p256.h"
 #include "hsm_x25519.h"
@@ -40,6 +41,9 @@ static int command_needs_auth(uint16_t cmd)
     case HSM_CMD_UNWRAP:
     case HSM_CMD_ENCRYPT:
     case HSM_CMD_DECRYPT:
+    case HSM_CMD_FW_UPDATE_BEGIN:
+    case HSM_CMD_FW_UPDATE_DATA:
+    case HSM_CMD_FW_UPDATE_APPLY:
         return 1;
     default:
         /* GET_PUBLIC is open: a public key is not secret, and standard PKCS#11
@@ -491,6 +495,45 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         HSM_KeyStore_StorageInfo(&si);
         memcpy(resp + HSM_HEADER_SIZE, &si, sizeof(si));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(si));
+    }
+
+    case HSM_CMD_FW_UPDATE_BEGIN: {
+        if (hdr.payload_length < sizeof(hsm_fwbegin_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_fwbegin_req_t rq; memcpy(&rq, payload, sizeof(rq));
+        if (HSM_Flash_StageErase(rq.total_len) != 0) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);   /* too big */
+        }
+        hsm_fwbegin_resp_t r = { .max_chunk = 480 };
+        memcpy(resp + HSM_HEADER_SIZE, &r, sizeof(r));
+        return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(r));
+    }
+
+    case HSM_CMD_FW_UPDATE_DATA: {
+        if (hdr.payload_length < sizeof(hsm_fwdata_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_fwdata_req_t rq; memcpy(&rq, payload, sizeof(rq));
+        uint16_t dlen = (uint16_t)(hdr.payload_length - sizeof(rq));
+        if (HSM_Flash_StageWrite(rq.offset, payload + sizeof(rq), dlen) != 0) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        return build_response(resp, &hdr, HSM_OK, 0);
+    }
+
+    case HSM_CMD_FW_UPDATE_APPLY: {
+        if (hdr.payload_length < sizeof(hsm_fwapply_req_t)) {
+            return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);
+        }
+        hsm_fwapply_req_t rq; memcpy(&rq, payload, sizeof(rq));
+        if (HSM_Flash_SetPending(rq.total_len) != 0) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        /* Reset into the bootloader, which verifies + applies the staged image.
+         * No response is sent — the host treats the USB drop as success. */
+        NVIC_SystemReset();
+        for (;;) { }   /* unreachable */
     }
 
     case HSM_CMD_RANDOM: {

@@ -523,6 +523,66 @@ static int c_initpin(ohsm_ctx *c, int ac, char **av)
     return st == HSM_OK ? 0 : 1;
 }
 
+/* Push a signed image (openhsm_signed.bin) to the device over the session: the
+ * bootloader verifies + applies it on the next boot. Streams only the header+app
+ * slice (offset 0x10000..), never the bootloader. */
+static int c_fwupdate(ohsm_ctx *c, int ac, char **av)
+{
+    if (ac < 1) { fprintf(stderr, "usage: fwupdate <openhsm_signed.bin>\n"); return 2; }
+    const uint32_t HDR_OFF = 0x10000u, HDR_SIZE = 0x2000u, MAGIC = 0x4F484253u; /* "OHBS" */
+
+    FILE *f = fopen(av[0], "rb");
+    if (!f) { perror(av[0]); return 1; }
+    fseek(f, 0, SEEK_END); long flen = ftell(f); fseek(f, 0, SEEK_SET);
+    if (flen < (long)(HDR_OFF + HDR_SIZE)) { fprintf(stderr, "not a signed image\n"); fclose(f); return 1; }
+    uint8_t *file = malloc((size_t)flen);
+    if (fread(file, 1, (size_t)flen, f) != (size_t)flen) { fclose(f); free(file); return 1; }
+    fclose(f);
+
+    uint32_t magic, img_len;
+    memcpy(&magic, file + HDR_OFF, 4);
+    memcpy(&img_len, file + HDR_OFF + 8, 4);
+    if (magic != MAGIC || HDR_OFF + HDR_SIZE + img_len > (uint32_t)flen) {
+        fprintf(stderr, "bad/short signed image (magic=0x%08x img_len=%u)\n", magic, img_len);
+        free(file); return 1;
+    }
+    uint32_t total = (HDR_SIZE + img_len + 15u) & ~15u;     /* 16-align */
+    uint8_t *slice = malloc(total);
+    memset(slice, 0xFF, total);
+    memcpy(slice, file + HDR_OFF, HDR_SIZE + img_len);
+    free(file);
+
+    if (login(c)) { free(slice); return 1; }
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+
+    hsm_fwbegin_req_t br = { .total_len = total };
+    uint16_t st = cmd(c, HSM_CMD_FW_UPDATE_BEGIN, (uint8_t *)&br, sizeof(br), resp, sizeof(resp), &o, &ol);
+    if (st != HSM_OK) { fprintf(stderr, "fwupdate begin: %s\n", status_str(st)); free(slice); return 1; }
+    uint16_t maxc; memcpy(&maxc, o, 2);
+    if (maxc == 0 || maxc > 480) maxc = 480;
+    maxc &= ~15u;
+
+    printf("staging %u bytes (img_len=%u) in %u-byte chunks...\n", total, img_len, maxc);
+    for (uint32_t off = 0; off < total; off += maxc) {
+        uint16_t n = (total - off < maxc) ? (uint16_t)(total - off) : maxc;
+        uint8_t req[4 + 480];
+        memcpy(req, &off, 4);
+        memcpy(req + 4, slice + off, n);
+        st = cmd(c, HSM_CMD_FW_UPDATE_DATA, req, (uint16_t)(4 + n), resp, sizeof(resp), &o, &ol);
+        if (st != HSM_OK) { fprintf(stderr, "\nfwupdate data @%u: %s\n", off, status_str(st)); free(slice); return 1; }
+        printf("\r  %u / %u", off + n, total); fflush(stdout);
+    }
+    printf("\n");
+    free(slice);
+
+    /* APPLY resets the device before replying — the dropped session = success. */
+    hsm_fwapply_req_t ap = { .total_len = total };
+    int rl = 0;
+    ohsm_cmd(c, HSM_CMD_FW_UPDATE_APPLY, (uint8_t *)&ap, sizeof(ap), resp, sizeof(resp), &rl);
+    printf("APPLY sent — device verifying & rebooting (blue LED). Re-check with `info`.\n");
+    return 0;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -532,6 +592,7 @@ static int usage(void)
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
       "  audit [n|all] | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
+      "  fwupdate <openhsm_signed.bin>\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
@@ -573,6 +634,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "initpin"))  rc = c_initpin(c, ac, av);
     else if (!strcmp(sub, "setpin"))   rc = c_setpin(c, ac, av);
     else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
+    else if (!strcmp(sub, "fwupdate")) rc = c_fwupdate(c, ac, av);
     else { ohsm_close(c); return usage(); }
 
     ohsm_close(c);

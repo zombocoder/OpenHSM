@@ -103,6 +103,7 @@ not the USB ISR.
 | 0x0042 | DECRYPT            | yes  | AES-256-GCM decrypt + verify |
 | 0x0050 | GET_AUDIT_LOG      | no   | recent audit entries |
 | 0x0051 | GET_STORAGE        | no   | key-store capacity & fill level |
+| 0x0060/61/62 | FW_UPDATE_BEGIN/DATA/APPLY | yes | stage a signed image; bootloader verifies+applies on reset |
 | 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED | — | reserved (WRAP/UNWRAP used instead) |
 
 ¹ SET_PIN is self-authenticating (verifies the old PIN). "Auth: yes" commands

@@ -16,11 +16,14 @@
 #include "image_header.h"
 #include "vendor_pubkey.h"
 #include "monocypher-ed25519.h"
+#include "hsm_flash.h"              /* OPENHSM_STAGE_* / OPENHSM_FWCTL_* layout */
+#include "flash_ram.h"             /* RAM-resident bank-1 apply */
 
 #include <stdint.h>
 #include <string.h>
 
 typedef struct { uint32_t magic; uint32_t min_version; } rollback_t;
+typedef struct { uint32_t magic; uint32_t total_len;   } fwctl_t;
 
 /* Highest version accepted so far (0 if the counter page is blank). */
 static uint32_t rollback_min(void)
@@ -118,6 +121,77 @@ static void jump_to_app(uint32_t app_base)
     for (;;) { }                                 /* unreachable */
 }
 
+/* ---- Secure firmware update: apply a staged image on boot ---------------- */
+
+/* Pending iff the control word has the magic AND a sane staged length. */
+static int update_pending(uint32_t *total_len)
+{
+    const fwctl_t *c = (const fwctl_t *)OPENHSM_FWCTL_ADDR;
+    if (c->magic == OPENHSM_FWCTL_MAGIC &&
+        c->total_len >= BOOT_HEADER_SIZE &&
+        c->total_len <= OPENHSM_STAGE_SIZE &&
+        c->total_len <= BOOT_HEADER_SIZE + VERIFY_MAX) {
+        *total_len = c->total_len;
+        return 1;
+    }
+    return 0;
+}
+
+/* Erase the control page so the update isn't re-applied next boot. */
+static void clear_pending(void)
+{
+    if (HAL_FLASH_Unlock() != HAL_OK) return;
+    FLASH_EraseInitTypeDef e = {0};
+    e.TypeErase = FLASH_TYPEERASE_PAGES;
+    e.Banks     = FLASH_BANK_2;
+    e.Page      = OPENHSM_FWCTL_PAGE;
+    e.NbPages   = 1;
+    uint32_t pe = 0;
+    HAL_FLASHEx_Erase(&e, &pe);
+    HAL_FLASH_Lock();
+}
+
+/* Verify the staged image (bank-2): magic, Ed25519 over version||img_len||app,
+ * anti-rollback, and that the staged bytes cover the image. @return 0 if valid. */
+static int verify_staged(uint32_t staged_total)
+{
+    const img_header_t *h   = (const img_header_t *)OPENHSM_STAGE_ADDR;
+    const uint8_t      *app = (const uint8_t *)(OPENHSM_STAGE_ADDR + BOOT_HEADER_SIZE);
+    if (h->magic != IMG_MAGIC) return -1;
+    if (h->img_len == 0 || h->img_len > VERIFY_MAX) return -1;
+    if ((uint32_t)BOOT_HEADER_SIZE + h->img_len > staged_total) return -1;
+    if (h->version < rollback_min()) return -1;          /* anti-rollback */
+
+    uint32_t v = h->version, n = h->img_len;
+    g_msg[0] = (uint8_t)v;  g_msg[1] = (uint8_t)(v >> 8);
+    g_msg[2] = (uint8_t)(v >> 16); g_msg[3] = (uint8_t)(v >> 24);
+    g_msg[4] = (uint8_t)n;  g_msg[5] = (uint8_t)(n >> 8);
+    g_msg[6] = (uint8_t)(n >> 16); g_msg[7] = (uint8_t)(n >> 24);
+    memcpy(g_msg + 8, app, n);
+    return crypto_ed25519_check(h->sig, openhsm_vendor_pubkey, g_msg, 8u + n) == 0 ? 0 : -1;
+}
+
+/* If an update is pending and verifies, program it into the bank-1 app region.
+ * The control word is cleared only AFTER programming, so a power loss mid-apply
+ * simply retries from the intact bank-2 staging on the next boot. */
+static void apply_pending_update(void)
+{
+    uint32_t total = 0;
+    if (!update_pending(&total)) return;
+    if (verify_staged(total) != 0) { clear_pending(); return; }   /* bad image → drop */
+
+    const img_header_t *sh = (const img_header_t *)OPENHSM_STAGE_ADDR;
+    uint32_t img = (uint32_t)BOOT_HEADER_SIZE + sh->img_len;
+    if (flash_apply(BOOT_HEADER_ADDR, OPENHSM_STAGE_ADDR, img) != 0) {
+        /* leave pending set → retry next boot */
+        return;
+    }
+    ICACHE->CR |= ICACHE_CR_CACHEINV;            /* no-op if ICACHE off; future-proof */
+    while (ICACHE->SR & ICACHE_SR_BUSYF) { }
+    __DSB(); __ISB();
+    clear_pending();
+}
+
 int main(void)
 {
     const img_header_t *h   = (const img_header_t *)BOOT_HEADER_ADDR;
@@ -130,6 +204,8 @@ int main(void)
     blue_init();
     for (int i = 0; i < 8; i++) { blue_toggle(); delay(300000); }  /* ~0.9 s @16 MHz */
     BLUE_GPIO->ODR |= (1u << BLUE_PIN);          /* solid during verify */
+
+    apply_pending_update();                      /* install a staged USB update, if any */
 
     if (h->magic != IMG_MAGIC) fail_halt();
     if (h->img_len == 0 || h->img_len > VERIFY_MAX) fail_halt();

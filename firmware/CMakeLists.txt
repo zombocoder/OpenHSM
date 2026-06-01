@@ -138,9 +138,10 @@ add_custom_command(TARGET openhsm.elf POST_BUILD
 # ---------------------------------------------------------------------------
 add_executable(bootloader.elf
     ${CMAKE_CURRENT_SOURCE_DIR}/bootloader/main.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/bootloader/flash_ram.c     # RAM-resident bank-1 apply
     ${CMAKE_CURRENT_SOURCE_DIR}/src/system_stm32u5xx.c
     ${HAL}/Src/stm32u5xx_hal.c             # HAL_GetTick/uwTick for flash timeouts
-    ${HAL}/Src/stm32u5xx_hal_flash.c       # anti-rollback counter write
+    ${HAL}/Src/stm32u5xx_hal_flash.c       # anti-rollback + control-page write
     ${HAL}/Src/stm32u5xx_hal_flash_ex.c
     ${VENDOR}/monocypher/src/monocypher.c
     ${VENDOR}/monocypher/src/optional/monocypher-ed25519.c
@@ -149,11 +150,17 @@ add_executable(bootloader.elf
 target_include_directories(bootloader.elf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/bootloader
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm       # hsm_flash.h (STAGE/FWCTL layout)
     ${VENDOR}/monocypher/src
     ${VENDOR}/monocypher/src/optional
     ${CMSIS}
     ${DEVICE}/Include
     ${HAL}/Inc)
+
+# The RAM-resident flash routine must not call into bank 1 (no memcpy from a
+# pattern-distributed loop) and must be reachable from a bank-1 caller.
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/bootloader/flash_ram.c
+    PROPERTIES COMPILE_OPTIONS "-fno-builtin;-fno-tree-loop-distribute-patterns;-mlong-calls")
 
 target_link_options(bootloader.elf PRIVATE
     ${MCU_FLAGS}
@@ -197,7 +204,13 @@ add_custom_target(keygen
 # Flash the signed image via DFU (board in system bootloader: BOOT0 high at reset).
 #   make flash   (or: cmake --build . --target flash)
 # ---------------------------------------------------------------------------
+# dfu-util returns non-zero ("Error during download get_status", exit 74) on the
+# STM32 DfuSe ":leave" step: the download succeeds, then the device resets and
+# detaches before dfu-util can read the final status. We therefore gate success
+# on dfu-util's own "File downloaded successfully" line, not its exit code — a
+# genuine download failure omits that line and still fails the build. (The
+# "Invalid DFU suffix signature" warning is harmless: we flash a raw .bin.)
 add_custom_target(flash
-    COMMAND dfu-util -a 0 -s 0x08000000:leave -D ${CMAKE_BINARY_DIR}/openhsm_signed.bin
+    COMMAND sh -c "dfu-util -a 0 -s 0x08000000:leave -D '${CMAKE_BINARY_DIR}/openhsm_signed.bin' 2>&1 | tee /dev/stderr | grep -q 'File downloaded successfully'"
     DEPENDS signed
     COMMENT "Flashing openhsm_signed.bin (bootloader + signed app) over DFU @0x08000000")
