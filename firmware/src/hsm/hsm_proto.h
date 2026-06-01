@@ -77,6 +77,7 @@ typedef enum {
     HSM_CMD_FW_UPDATE_BEGIN = 0x0060,  /* stage a signed app image: erase staging */
     HSM_CMD_FW_UPDATE_DATA  = 0x0061,  /* write a chunk into staging at offset    */
     HSM_CMD_FW_UPDATE_APPLY = 0x0062,  /* mark pending + reset; bootloader applies */
+    HSM_CMD_TAMPER_TEST     = 0x0070,  /* diagnostic: fire the tamper response on demand */
 } hsm_command_t;
 
 /* Response status codes. */
@@ -138,6 +139,7 @@ typedef enum {
     HSM_EV_ENCRYPT   = 10,
     HSM_EV_DECRYPT   = 11,
     HSM_EV_SET_PIN   = 12,
+    HSM_EV_TAMPER    = 13,   /* tamper response fired: RAM secrets wiped, sessions dropped */
 } hsm_audit_event_t;
 
 /* One audit entry: monotonic seq + event + arg (object id / status) + a

@@ -41,6 +41,7 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 | `setpin <old> <new>` | change the login PIN |
 | `bench [seconds] [payload]` | throughput benchmark (AES-GCM, HMAC) vs spec §20 targets |
 | `fwupdate <openhsm_signed.bin>` | push a signed firmware image over USB; bootloader verifies + applies on reset (no DFU) |
+| `tamper-test` | fire the tamper response (wipe RAM secrets + drop sessions); verify via `audit`, recover by power-cycle |
 
 ## Examples
 ```sh

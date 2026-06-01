@@ -122,8 +122,8 @@ static const char *alg_name(uint16_t a)
 static const char *ev_name(uint16_t e)
 {
     static const char *n[] = {"?","BOOT","AUTH_OK","AUTH_FAIL","KEYGEN","KEYDEL",
-        "SIGN","HMAC","WRAP","UNWRAP","ENCRYPT","DECRYPT","SET_PIN"};
-    return (e <= 12) ? n[e] : "?";
+        "SIGN","HMAC","WRAP","UNWRAP","ENCRYPT","DECRYPT","SET_PIN","TAMPER"};
+    return (e <= 13) ? n[e] : "?";
 }
 
 /* ---- subcommands --------------------------------------------------------- */
@@ -583,6 +583,24 @@ static int c_fwupdate(ohsm_ctx *c, int ac, char **av)
     return 0;
 }
 
+/* Fire the device's tamper response on demand (diagnostic). The device sends
+ * the encrypted ACK, then wipes its session keys + KEK and logs HSM_EV_TAMPER;
+ * every key op then fails until a power cycle re-derives the KEK at boot. */
+static int c_tamper(ohsm_ctx *c, int ac, char **av)
+{
+    (void)ac; (void)av;
+    if (login(c)) return 1;
+    uint8_t resp[HSM_MAX_MSG]; int ol;
+    uint16_t st = cmd(c, HSM_CMD_TAMPER_TEST, NULL, 0, resp, sizeof(resp), NULL, &ol);
+    if (st != HSM_OK) { fprintf(stderr, "tamper-test: %s\n", status_str(st)); return 1; }
+    printf("tamper response fired: device wiped session keys + KEK, logged HSM_EV_TAMPER.\n");
+    printf("Verify (no power cycle yet):\n");
+    printf("  openhsm-cli audit          # newest entry is TAMPER\n");
+    printf("  openhsm-cli sign <id> hi   # fails (not authorized) — KEK is gone\n");
+    printf("Power-cycle the device to restore normal operation (KEK re-derives at boot).\n");
+    return 0;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -592,7 +610,7 @@ static int usage(void)
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
       "  audit [n|all] | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
-      "  fwupdate <openhsm_signed.bin>\n"
+      "  fwupdate <openhsm_signed.bin> | tamper-test\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
@@ -635,6 +653,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "setpin"))   rc = c_setpin(c, ac, av);
     else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
     else if (!strcmp(sub, "fwupdate")) rc = c_fwupdate(c, ac, av);
+    else if (!strcmp(sub, "tamper-test")) rc = c_tamper(c, ac, av);
     else { ohsm_close(c); return usage(); }
 
     ohsm_close(c);

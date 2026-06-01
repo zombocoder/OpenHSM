@@ -22,6 +22,7 @@
 #include "hsm_x25519.h"
 #include "hsm_hash.h"
 #include "hsm_aead.h"
+#include "hsm_tamper.h"
 
 #include <string.h>
 
@@ -244,5 +245,10 @@ size_t HSM_Session_Unwrap(const uint8_t *req, size_t req_len,
                           inner_resp, inner_len, out_ct, out_tag) != 0) {
         return HSM_BuildResponse(resp, req, HSM_ERR_INTERNAL, 0);
     }
+    /* The response envelope is fully built above. If an inner command (e.g.
+     * TAMPER_TEST) queued a tamper trip, service it now — *after* encrypting
+     * with the still-valid key, *before* returning the bytes to be sent. The
+     * trip zeroizes this session (and the KEK); `s` must not be used after. */
+    HSM_Tamper_Service();
     return HSM_HEADER_SIZE + inner_len + HSM_GCM_TAG_LEN;
 }

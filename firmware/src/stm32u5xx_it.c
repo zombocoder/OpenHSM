@@ -20,3 +20,10 @@ void OTG_FS_IRQHandler(void)
 {
     HAL_PCD_IRQHandler(&hpcd_USB_OTG_FS);
 }
+
+/* Programmable Voltage Detector / Peripheral Voltage Monitor (brownout tamper).
+ * HAL clears the EXTI flag and invokes HAL_PWR_PVDCallback() (see main.c). */
+void PVD_PVM_IRQHandler(void)
+{
+    HAL_PWR_PVD_IRQHandler();
+}

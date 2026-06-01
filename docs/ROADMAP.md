@@ -74,9 +74,23 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   debugger is available.
 
 ### C. Tamper protection (§18)
-- ⬜ Hardware: TAMP pins, voltage/clock anomaly detection, brownout (PVD), backup-
-  domain tamper → zeroize session keys / KEK / optionally secure storage.
-- ⬜ Software: debug lock state, memory zeroization on tamper, active-tamper response.
+- ✅ **Tamper response** (RAM-secret zeroization): `HSM_Tamper_Trip()` audit-logs
+  `HSM_EV_TAMPER`, zeroizes the in-RAM KEK (so every stored key becomes unusable),
+  and drops all secure sessions (zeroizes per-session transport keys + login).
+  Latched until the next boot, where `HSM_KeyStore_Init` re-derives the KEK from
+  the hardware HUK+UID and clears the latch — i.e. a *runtime lockdown*, power-cycle
+  recovers. Triggers: the **PVD/brownout** detector (real) and a gated
+  **`HSM_CMD_TAMPER_TEST`** diagnostic (`openhsm-cli tamper-test`, reproducible
+  without a bench PSU). The trip is queued, never run in ISR/in-line: the PVD ISR
+  and command path set a flag serviced from a safe context (main loop / after the
+  encrypted ACK is built), so the audit-log flash write never runs in interrupt
+  context and the ACK still reaches the host. Verified on hardware via `tamper-test`:
+  audit shows TAMPER, subsequent key ops fail (not authorized), power-cycle restores.
+- ⬜ Real analog **PVD/BOR threshold** trip needs a variable bench supply to dip VDD;
+  the response path is proven via `tamper-test` (shared code), the PVD wiring is in.
+- ⬜ **Debug-lock detection** (refuse / zeroize when a debugger is attached) — best
+  tested with the incoming SWD programmer (attach → expect tamper); not yet wired.
+- ⬜ Backup-domain TAMP pins / persistent secure-storage wipe → ties into RDP-2 (D).
 
 ### D. Manufacturing security (§22) ⚠️ mostly irreversible
 - ⬜ RDP level 2 (readout protection) — **disables DFU/JTAG permanently**.

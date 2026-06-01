@@ -17,6 +17,7 @@
 #include "hsm_x25519.h"
 #include "hsm_hash.h"
 #include "hsm_audit.h"
+#include "hsm_tamper.h"
 
 #include <string.h>
 #include "stm32u5xx.h"
@@ -44,6 +45,7 @@ static int command_needs_auth(uint16_t cmd)
     case HSM_CMD_FW_UPDATE_BEGIN:
     case HSM_CMD_FW_UPDATE_DATA:
     case HSM_CMD_FW_UPDATE_APPLY:
+    case HSM_CMD_TAMPER_TEST:
         return 1;
     default:
         /* GET_PUBLIC is open: a public key is not secret, and standard PKCS#11
@@ -330,8 +332,11 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
             return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
         }
         uint8_t seed[64]; uint16_t seed_len;
-        if (HSM_KeyStore_LoadKey(rq.id, seed, &seed_len) != HSM_OK) {
-            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        uint16_t lst = HSM_KeyStore_LoadKey(rq.id, seed, &seed_len);
+        if (lst != HSM_OK) {
+            /* Propagate the real cause (e.g. NOT_AUTHORIZED after a tamper wipe)
+             * rather than masking every load failure as INTERNAL. */
+            return build_response(resp, &hdr, lst, 0);
         }
         uint8_t sig[64];
         if (info.algorithm == HSM_KEY_ECDSA_P256) {
@@ -369,8 +374,9 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
             return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
         }
         uint8_t key[64]; uint16_t key_len;
-        if (HSM_KeyStore_LoadKey(rq.id, key, &key_len) != HSM_OK) {
-            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        uint16_t lst = HSM_KeyStore_LoadKey(rq.id, key, &key_len);
+        if (lst != HSM_OK) {
+            return build_response(resp, &hdr, lst, 0);   /* e.g. NOT_AUTHORIZED after tamper */
         }
         uint8_t mac[HSM_SHA256_LEN];
         int rc = HSM_HmacSha256(key, key_len, payload + sizeof(rq), rq.msg_len, mac);
@@ -534,6 +540,16 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
          * No response is sent — the host treats the USB drop as success. */
         NVIC_SystemReset();
         for (;;) { }   /* unreachable */
+    }
+
+    case HSM_CMD_TAMPER_TEST: {
+        /* Diagnostic: queue the tamper response. We do NOT trip in-line — the
+         * encrypted ACK for THIS command must be built (with the still-valid
+         * session key) and transmitted first; the session layer services the
+         * pending trip right after encrypting the response. The host then sees
+         * its session/keys dead, and any later key op fails until reboot. */
+        g_tamper_pending = HSM_TAMPER_TEST;
+        return build_response(resp, &hdr, HSM_OK, 0);
     }
 
     case HSM_CMD_RANDOM: {

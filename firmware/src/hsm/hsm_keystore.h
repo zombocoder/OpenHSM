@@ -13,6 +13,14 @@
 void HSM_KeyStore_Init(void);
 
 /**
+ * @brief Tamper response: zeroize the in-RAM master key (KEK) and latch a
+ *        "tampered" flag so every key operation fails until the next boot
+ *        (HSM_KeyStore_Init re-derives the KEK and clears the flag). Does NOT
+ *        touch flash — keys persist sealed; they simply become unusable in RAM.
+ */
+void HSM_KeyStore_TamperWipe(void);
+
+/**
  * @brief Verify a PIN, managing the persistent retry counter / lockout.
  * @return HSM_OK, HSM_ERR_LOCKED, or HSM_ERR_NOT_AUTHORIZED; *tries_left updated.
  */

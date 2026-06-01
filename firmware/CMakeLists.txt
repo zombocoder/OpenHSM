@@ -82,6 +82,7 @@ set(APP_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_flash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_keystore.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_audit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hsm/hsm_tamper.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_hash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_aead.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/hsm_x25519.c
@@ -205,12 +206,12 @@ add_custom_target(keygen
 #   make flash   (or: cmake --build . --target flash)
 # ---------------------------------------------------------------------------
 # dfu-util returns non-zero ("Error during download get_status", exit 74) on the
-# STM32 DfuSe ":leave" step: the download succeeds, then the device resets and
-# detaches before dfu-util can read the final status. We therefore gate success
-# on dfu-util's own "File downloaded successfully" line, not its exit code — a
-# genuine download failure omits that line and still fails the build. (The
-# "Invalid DFU suffix signature" warning is harmless: we flash a raw .bin.)
+# STM32 DfuSe ":leave" step (device resets before the final get_status). The
+# helper script gates success on dfu-util's "File downloaded successfully" line
+# instead of its exit code. It lives in a script file (not an inline `sh -c`)
+# because a pipeline written directly in COMMAND is split by the make recipe
+# shell at the `|`, not run under one shell.
 add_custom_target(flash
-    COMMAND sh -c "dfu-util -a 0 -s 0x08000000:leave -D '${CMAKE_BINARY_DIR}/openhsm_signed.bin' 2>&1 | tee /dev/stderr | grep -q 'File downloaded successfully'"
+    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/dfu_flash.sh ${CMAKE_BINARY_DIR}/openhsm_signed.bin
     DEPENDS signed
     COMMENT "Flashing openhsm_signed.bin (bootloader + signed app) over DFU @0x08000000")

@@ -79,6 +79,7 @@ typedef struct __attribute__((packed)) {
 static store_t   store __attribute__((aligned(16)));  /* RAM image, 16-aligned
                                   so each slot's GCM AAD pointer is 16-aligned */
 static uint8_t   kek[32];        /* derived at boot, kept in RAM only */
+static volatile uint8_t tampered = 0;  /* set by TamperWipe; blocks all key ops until reboot */
 
 /* ------------------------------------------------------------------------- */
 
@@ -121,8 +122,16 @@ static int persist(void)
     return HSM_Flash_WriteRegion(&store, sizeof(store));
 }
 
+void HSM_KeyStore_TamperWipe(void)
+{
+    volatile uint8_t *v = kek;
+    for (size_t i = 0; i < sizeof(kek); i++) v[i] = 0;
+    tampered = 1;
+}
+
 void HSM_KeyStore_Init(void)
 {
+    tampered = 0;   /* a fresh boot re-derives the KEK below; clear any latch */
     derive_kek();
     HSM_Flash_Read(0, &store, sizeof(store));
     if (store.magic != STORE_MAGIC || store.version != STORE_VERSION) {
@@ -309,6 +318,7 @@ static uint16_t store_key(uint16_t algorithm, uint16_t key_bits, uint16_t caps,
 
 uint16_t HSM_KeyStore_Generate(const hsm_genkey_req_t *req, hsm_obj_info_t *out)
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     uint16_t key_len = key_len_for(req->algorithm);
     if (key_len == 0) {
         return HSM_ERR_INVALID_PARAM;
@@ -378,6 +388,7 @@ uint16_t HSM_KeyStore_Delete(uint32_t id)
 
 uint16_t HSM_KeyStore_LoadKey(uint32_t id, uint8_t *out, uint16_t *out_len)
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     keyslot_t *s = find_slot(id);
     if (s == NULL) return HSM_ERR_INVALID_PARAM;
     if (HSM_AesGcmDecrypt(kek, s->nonce, (const uint8_t *)s, SLOT_AAD_LEN,
@@ -413,6 +424,7 @@ uint16_t HSM_KeyStore_Encrypt(uint32_t id, const uint8_t nonce[12],
                               const uint8_t *pt, uint16_t pt_len,
                               uint8_t *ct_out, uint8_t tag_out[16])
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     keyslot_t *s = find_slot(id);
     if (s == NULL) return HSM_ERR_INVALID_PARAM;
     if (s->algorithm != HSM_KEY_AES256 || !(s->capabilities & HSM_CAP_ENCRYPT)) {
@@ -433,6 +445,7 @@ uint16_t HSM_KeyStore_Decrypt(uint32_t id, const uint8_t nonce[12],
                               const uint8_t *ct, uint16_t ct_len,
                               const uint8_t tag[16], uint8_t *pt_out)
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     keyslot_t *s = find_slot(id);
     if (s == NULL) return HSM_ERR_INVALID_PARAM;
     if (s->algorithm != HSM_KEY_AES256 || !(s->capabilities & HSM_CAP_DECRYPT)) {
@@ -463,6 +476,7 @@ static uint16_t load_wrapping_key(uint32_t id, uint16_t need_cap, uint8_t out[32
 uint16_t HSM_KeyStore_Wrap(uint32_t wrap_id, uint32_t target_id,
                            uint8_t *out_blob, uint16_t *out_len)
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     keyslot_t *t = find_slot(target_id);
     if (t == NULL) return HSM_ERR_INVALID_PARAM;
     if (!t->exportable) return HSM_ERR_NOT_AUTHORIZED;  /* wrapped export only */
@@ -499,6 +513,7 @@ uint16_t HSM_KeyStore_Unwrap(uint32_t wrap_id, const uint8_t *blob, uint16_t blo
                              uint16_t caps, uint8_t exportable, uint8_t auth_domain,
                              const uint8_t *label, hsm_obj_info_t *out)
 {
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
     if (blob_len < HSM_WRAP_HDR_LEN + HSM_WRAP_NONCE_LEN + HSM_WRAP_TAG_LEN) {
         return HSM_ERR_BAD_LENGTH;
     }

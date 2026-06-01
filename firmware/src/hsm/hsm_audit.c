@@ -38,8 +38,11 @@ static uint8_t           audit_key[32];
 static uint8_t           prev_mac[8];
 
 /* Scan the flash audit page: find the newest entry (max seq), recover the chain
- * tail (prev_mac) and the next write slot, and rebuild the RAM ring. */
-static void audit_recover(void)
+ * tail (prev_mac) and the next write slot, and rebuild the RAM ring. Returns 1
+ * if the durable log is non-empty and sets *out_maxseq to the highest seq found;
+ * returns 0 (and leaves *out_maxseq untouched) when the page is empty. The seq
+ * reconciliation is left to HSM_Audit_Init (see there). */
+static int audit_recover(uint32_t *out_maxseq)
 {
     hsm_audit_entry_t e;
     int newest = -1;
@@ -50,15 +53,12 @@ static void audit_recover(void)
             maxseq = e.seq; newest = (int)i;
         }
     }
-    if (newest < 0) { flash_idx = 0; return; }   /* empty page */
+    if (newest < 0) { flash_idx = 0; return 0; }   /* empty page */
 
     HSM_Flash_AuditRead((uint32_t)newest, &e);
     memcpy(prev_mac, e.mac, 8);
     flash_idx = ((uint32_t)newest + 1u) % OPENHSM_AUDIT_SLOTS;
-    if (maxseq + 1u > next_seq) {                 /* keep seq monotonic vs log */
-        next_seq = maxseq + 1u;
-        block_end = next_seq;                     /* force a fresh reservation */
-    }
+    *out_maxseq = maxseq;
 
     /* Rebuild the ring: the newest AUDIT_RING entries, ending at `newest`. */
     hsm_audit_entry_t tmp[AUDIT_RING];
@@ -80,13 +80,29 @@ static void audit_recover(void)
 void HSM_Audit_Init(void)
 {
     HSM_KeyStore_AuditKey(audit_key);
-    next_seq = HSM_KeyStore_ReserveAudit(AUDIT_BLOCK);
-    block_end = next_seq + AUDIT_BLOCK;
     ring_count = 0;
     ring_head = 0;
     flash_idx = 0;
     memset(prev_mac, 0, sizeof(prev_mac));
-    audit_recover();
+
+    uint32_t maxseq = 0;
+    int have = audit_recover(&maxseq);
+
+    next_seq  = HSM_KeyStore_ReserveAudit(AUDIT_BLOCK);
+    block_end = next_seq + AUDIT_BLOCK;
+    /* Normally the persistent reserve counter is ahead of every written seq, so
+     * the reserved base already exceeds the durable max. If it does NOT (e.g. the
+     * key store was reset while the dedicated audit pages survived, leaving stale
+     * high-seq entries), reserve enough extra to jump the counter past that max —
+     * otherwise new entries would get seqs *below* the stale ones and sort out of
+     * the "newest" view. One-time reconciliation; durably advances store.audit_seq. */
+    if (have && maxseq >= next_seq) {
+        uint32_t need = (maxseq + 1u) - next_seq + AUDIT_BLOCK;
+        uint32_t base = HSM_KeyStore_ReserveAudit(need);
+        next_seq  = maxseq + 1u;        /* first unused seq above the stale max */
+        block_end = base + need;        /* end of the freshly reserved range */
+    }
+
     HSM_Audit_Log(HSM_EV_BOOT, 0);
 }
 
@@ -116,6 +132,23 @@ void HSM_Audit_Log(uint16_t event, uint16_t arg)
     ring[ring_head] = e;
     ring_head = (uint16_t)((ring_head + 1) % AUDIT_RING);
     if (ring_count < AUDIT_RING) ring_count++;
+
+    /* The write slot must be erased — flash programs only from 0xFF. If the
+     * ring's write frontier was mis-derived (a seq discontinuity after a key
+     * store reset can leave physical write order out of sync with seq order),
+     * flash_idx may land on a stale, non-erased slot and the program would fail
+     * (and the entry would silently never persist). Detect that and skip to the
+     * next page boundary, which the erase-on-entry step below clears — a one-time
+     * self-heal that costs one stale page, not the whole log. */
+    {
+        hsm_audit_entry_t cur;
+        HSM_Flash_AuditRead(flash_idx, &cur);
+        if (cur.seq != AUDIT_EMPTY && (flash_idx % OPENHSM_AUDIT_PAGE_SLOTS) != 0) {
+            uint32_t pages = OPENHSM_AUDIT_SLOTS / OPENHSM_AUDIT_PAGE_SLOTS;
+            uint32_t next_page = ((flash_idx / OPENHSM_AUDIT_PAGE_SLOTS) + 1u) % pages;
+            flash_idx = next_page * OPENHSM_AUDIT_PAGE_SLOTS;
+        }
+    }
 
     /* Durable append into the page ring. Whenever we step onto a page's first
      * slot we erase just that page first — it holds the oldest generation, so

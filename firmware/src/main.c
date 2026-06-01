@@ -13,6 +13,30 @@
 #include "hsm_session.h"
 #include "hsm_keystore.h"
 #include "hsm_audit.h"
+#include "hsm_tamper.h"
+
+/* Programmable Voltage Detector: a brownout / supply-glitch below the threshold
+ * fires PVD_PVM_IRQn. The ISR only QUEUES the tamper response (the trip writes
+ * the audit log to flash, which must not run in interrupt context); the main
+ * loop services it. The threshold sits well under the 3.3 V rail and the IT is
+ * rising-edge, so a steady supply never trips it — only an actual dip does. */
+static void tamper_pvd_init(void)
+{
+    PWR_PVDTypeDef pvd = {0};
+    pvd.PVDLevel = PWR_PVDLEVEL_4;          /* ~2.5 V; far below the 3.3 V rail */
+    pvd.Mode     = PWR_PVD_MODE_IT_RISING;  /* IT when VDD falls through threshold */
+    HAL_PWR_ConfigPVD(&pvd);
+    __HAL_PWR_PVD_EXTI_CLEAR_FLAG();        /* drop any stale edge before enabling */
+    HAL_NVIC_SetPriority(PVD_PVM_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(PVD_PVM_IRQn);
+    HAL_PWR_EnablePVD();
+}
+
+/* HAL calls this from HAL_PWR_PVD_IRQHandler (see PVD_PVM_IRQHandler). */
+void HAL_PWR_PVDCallback(void)
+{
+    g_tamper_pending = HSM_TAMPER_PVD;
+}
 
 static void led_init(void)
 {
@@ -91,12 +115,17 @@ int main(void)
     HSM_Session_Init();
     HSM_KeyStore_Init();
     HSM_Audit_Init();
+    tamper_pvd_init();
     MX_USB_Device_Init();
 
     uint32_t last_blink = HAL_GetTick();
 
     for (;;) {
         USBD_Vendor_Poll(&hUsbDeviceFS);
+
+        /* Service a tamper trip queued by the PVD ISR (the command-path trip is
+         * serviced inline by the session layer after the ACK is encrypted). */
+        HSM_Tamper_Service();
 
         if ((HAL_GetTick() - last_blink) >= 250U) {
             last_blink = HAL_GetTick();
