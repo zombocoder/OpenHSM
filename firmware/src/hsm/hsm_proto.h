@@ -74,6 +74,7 @@ typedef enum {
     HSM_CMD_DECRYPT         = 0x0042,
     HSM_CMD_GET_AUDIT_LOG   = 0x0050,
     HSM_CMD_GET_STORAGE     = 0x0051,  /* key-store capacity & fill level       */
+    HSM_CMD_GET_AUDIT_KEY   = 0x0052,  /* export the audit-chain HMAC key (gated) */
     HSM_CMD_FW_UPDATE_BEGIN = 0x0060,  /* stage a signed app image: erase staging */
     HSM_CMD_FW_UPDATE_DATA  = 0x0061,  /* write a chunk into staging at offset    */
     HSM_CMD_FW_UPDATE_APPLY = 0x0062,  /* mark pending + reset; bootloader applies */

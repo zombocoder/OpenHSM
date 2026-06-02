@@ -114,8 +114,16 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   straight from flash, sorted oldest-first by seq — `openhsm-cli audit [n|all]`
   walks the pages, so the full durable log (verified: 805 entries, strictly
   monotonic, no boundary dups) is readable, not just the last ~31.
-  Remaining: host-side chain-verification tooling (auditor holding the key);
-  optionally persist only security events (not every crypto op) to cut flash wear.
+  Host-side chain verification (auditor-holding-the-key model): gated
+  `GET_AUDIT_KEY` (0x0052) exports the 32-byte HMAC key over the encrypted
+  session; `openhsm-cli audit-verify` fetches the key + the full durable log and
+  recomputes each entry's `HMAC(key, prev_mac‖seq‖event‖arg)[0:8]`, checking it
+  chains to its predecessor. Contiguous-seq links must match (a mismatch = the
+  log was altered/reordered/truncated); seq gaps are expected boundaries
+  (rolling-window eviction or the pre-reboot tail) and reset the anchor. Reports
+  links-verified / boundaries / TAMPER-count and exits non-zero on any break.
+  Remaining: optionally persist only security events (not every crypto op) to cut
+  flash wear.
 - ✅ **Store capacity**: `HSM_MAX_OBJECTS=32`, `FIND_OBJECT` paged
   (`offset`/`total`/`next_offset`), `GET_STORAGE` reports fill. The 8 KB page
   physically holds ~50 slots; raising the limit further is a one-line change.

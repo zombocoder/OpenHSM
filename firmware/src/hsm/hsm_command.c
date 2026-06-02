@@ -46,6 +46,7 @@ static int command_needs_auth(uint16_t cmd)
     case HSM_CMD_FW_UPDATE_DATA:
     case HSM_CMD_FW_UPDATE_APPLY:
     case HSM_CMD_TAMPER_TEST:
+    case HSM_CMD_GET_AUDIT_KEY:   /* the key lets the holder forge entries — admin only */
         return 1;
     default:
         /* GET_PUBLIC is open: a public key is not secret, and standard PKCS#11
@@ -501,6 +502,21 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         HSM_KeyStore_StorageInfo(&si);
         memcpy(resp + HSM_HEADER_SIZE, &si, sizeof(si));
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(si));
+    }
+
+    case HSM_CMD_GET_AUDIT_KEY: {
+        /* Export the 32-byte audit-chain HMAC key so a host/auditor can verify
+         * the log's chain offline. Admin-gated and only ever sent inside the
+         * encrypted session. The holder can forge entries, so this is the
+         * "auditor holding the key" trust model (see hsm_audit.c). */
+        if (resp_cap < HSM_HEADER_SIZE + 32) {
+            return build_response(resp, &hdr, HSM_ERR_INTERNAL, 0);
+        }
+        uint8_t k[32];
+        HSM_KeyStore_AuditKey(k);
+        memcpy(resp + HSM_HEADER_SIZE, k, sizeof(k));
+        memset(k, 0, sizeof(k));
+        return build_response(resp, &hdr, HSM_OK, 32);
     }
 
     case HSM_CMD_FW_UPDATE_BEGIN: {

@@ -601,6 +601,76 @@ static int c_tamper(ohsm_ctx *c, int ac, char **av)
     return 0;
 }
 
+/* Verify the audit log's HMAC chain on the host. Fetches the audit key (gated)
+ * and every durable entry, then recomputes each entry's MAC =
+ * HMAC-SHA256(key, prev_mac[8] || seq || event || arg)[0:8] and checks it chains
+ * to its predecessor. A break where seqs ARE contiguous means the log was
+ * altered/reordered; a seq gap is an expected boundary (rolling-window eviction
+ * or the pre-reboot tail) and cannot be cross-checked, so it resets the anchor. */
+static int c_audit_verify(ohsm_ctx *c, int ac, char **av)
+{
+    (void)ac; (void)av;
+    if (login(c)) return 1;
+
+    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint16_t st = cmd(c, HSM_CMD_GET_AUDIT_KEY, NULL, 0, resp, sizeof(resp), &o, &ol);
+    if (st != HSM_OK || ol < 32) {
+        fprintf(stderr, "audit-verify: get key: %s\n", status_str(st)); return 1;
+    }
+    uint8_t key[32]; memcpy(key, o, 32);
+
+    hsm_auditlog_resp_t ar; hsm_audit_entry_t page[32];
+    if ((st = audit_page(c, 0, &ar, page, resp, sizeof(resp))) != HSM_OK) {
+        fprintf(stderr, "audit-verify: %s\n", status_str(st)); sodium_memzero(key, 32); return 1;
+    }
+    uint16_t total = ar.total;
+    hsm_audit_entry_t *ent = calloc(total ? total : 1, sizeof(hsm_audit_entry_t));
+    if (!ent) { fprintf(stderr, "audit-verify: out of memory\n"); sodium_memzero(key, 32); return 1; }
+
+    uint16_t n = 0, offset = 0;
+    while (offset < total) {
+        if ((st = audit_page(c, offset, &ar, page, resp, sizeof(resp))) != HSM_OK) {
+            fprintf(stderr, "audit-verify: %s\n", status_str(st));
+            free(ent); sodium_memzero(key, 32); return 1;
+        }
+        if (ar.count == 0) break;
+        for (int i = 0; i < ar.count && n < total; i++) ent[n++] = page[i];
+        offset = ar.next_offset;
+    }
+
+    unsigned verified = 0, gaps = 0, broken = 0, tampers = 0;
+    uint32_t first_bad = 0;
+    for (uint16_t i = 0; i < n; i++) {
+        if (ent[i].event == HSM_EV_TAMPER) tampers++;
+        if (i == 0) continue;
+        if (ent[i].seq != ent[i - 1].seq + 1) { gaps++; continue; }  /* boundary */
+        uint8_t buf[16], full[crypto_auth_hmacsha256_BYTES];
+        memcpy(buf,      ent[i - 1].mac, 8);
+        memcpy(buf + 8,  &ent[i].seq,   4);
+        memcpy(buf + 12, &ent[i].event, 2);
+        memcpy(buf + 14, &ent[i].arg,   2);
+        crypto_auth_hmacsha256(full, buf, sizeof(buf), key);
+        if (memcmp(full, ent[i].mac, 8) == 0) verified++;
+        else { if (!broken) first_bad = ent[i].seq; broken++; }
+    }
+    sodium_memzero(key, sizeof(key));
+
+    printf("audit-verify: %u entries", n);
+    if (n) printf(" (seq %u..%u)", ent[0].seq, ent[n - 1].seq);
+    printf("\n  links verified: %u   boundaries (gaps): %u   TAMPER events: %u\n",
+           verified, gaps, tampers);
+    int rc = 0;
+    if (broken) {
+        printf("  CHAIN BROKEN: %u contiguous link(s) failed, first at seq=%u "
+               "— the log was altered, reordered or truncated.\n", broken, first_bad);
+        rc = 1;
+    } else {
+        printf("  chain intact: every contiguous link's HMAC verifies.\n");
+    }
+    free(ent);
+    return rc;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -609,7 +679,7 @@ static int usage(void)
       "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
-      "  audit [n|all] | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
+      "  audit [n|all] | audit-verify | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
       "  fwupdate <openhsm_signed.bin> | tamper-test\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
@@ -654,6 +724,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
     else if (!strcmp(sub, "fwupdate")) rc = c_fwupdate(c, ac, av);
     else if (!strcmp(sub, "tamper-test")) rc = c_tamper(c, ac, av);
+    else if (!strcmp(sub, "audit-verify")) rc = c_audit_verify(c, ac, av);
     else { ohsm_close(c); return usage(); }
 
     ohsm_close(c);
