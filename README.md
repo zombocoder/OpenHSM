@@ -1,7 +1,7 @@
 # OpenHSM
 
-A FreeBSD-compatible, USB-connected Hardware Security Module appliance built on
-an **STM32U585CIU6**, targeting HashiCorp Vault's PKCS#11 seal and general
+A USB-connected Hardware Security Module appliance built on
+an **STM32U585CIU6**, targeting PKCS#11 seal and general
 PKCS#11 / OpenSC / p11-kit consumers.
 
 > Work in progress. See `firmware/README.md` for the device build/flash flow and
@@ -51,12 +51,12 @@ Toolchain prerequisites: `arm-none-eabi-gcc` (Arm GNU 15.x), `cmake` ≥ 3.20,
 
 ## Status (verified on hardware)
 
-| Milestone | Capability |
-|-----------|------------|
-| 1 | USB vendor-specific device, PING/GET_INFO, multi-packet framing |
-| 2 | Hardware TRNG (`RANDOM`) |
-| 3 | HW crypto KAT self-test + secure session (X25519 ECDH → HKDF → AES-256-GCM, anti-replay) |
-| 4 | Encrypted key store in flash (HUK→KEK→objects; GENERATE/FIND/GET/DELETE; persistent) |
+| Milestone | Capability                                                                               |
+| --------- | ---------------------------------------------------------------------------------------- |
+| 1         | USB vendor-specific device, PING/GET_INFO, multi-packet framing                          |
+| 2         | Hardware TRNG (`RANDOM`)                                                                 |
+| 3         | HW crypto KAT self-test + secure session (X25519 ECDH → HKDF → AES-256-GCM, anti-replay) |
+| 4         | Encrypted key store in flash (HUK→KEK→objects; GENERATE/FIND/GET/DELETE; persistent)     |
 
 ## Current security caveats
 
