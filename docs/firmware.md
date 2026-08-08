@@ -64,55 +64,56 @@ not the USB ISR.
 
 ### Packet header (16 bytes, little-endian)
 
-| Off | Size | Field            | Notes                                      |
-|----:|-----:|------------------|--------------------------------------------|
-| 0   | 2    | `command`        | `hsm_command_t`                            |
-| 2   | 2    | `flags`          | `HSM_FLAG_ENCRYPTED` (0x0001), `_RESPONSE` (0x8000) |
-| 4   | 4    | `session_id`     | 0 outside a session                        |
-| 8   | 4    | `counter`        | per-direction anti-replay counter          |
-| 12  | 2    | `payload_length` | bytes following the header                 |
-| 14  | 2    | `status`         | `hsm_status_t` (meaningful on responses)   |
+| Off | Size | Field            | Notes                                               |
+| --: | ---: | ---------------- | --------------------------------------------------- |
+|   0 |    2 | `command`        | `hsm_command_t`                                     |
+|   2 |    2 | `flags`          | `HSM_FLAG_ENCRYPTED` (0x0001), `_RESPONSE` (0x8000) |
+|   4 |    4 | `session_id`     | 0 outside a session                                 |
+|   8 |    4 | `counter`        | per-direction anti-replay counter                   |
+|  12 |    2 | `payload_length` | bytes following the header                          |
+|  14 |    2 | `status`         | `hsm_status_t` (meaningful on responses)            |
 
 ---
 
 ## 4. Command set
 
-| Code   | Command            | Auth | Notes |
-|--------|--------------------|:----:|-------|
-| 0x0001 | PING               | no   | echoes magic `0x4F48534D` |
-| 0x0002 | GET_INFO           | no   | proto/fw version, 96-bit UID |
-| 0x0003 | SELFTEST           | no   | crypto KAT (per-primitive results) |
-| 0x0004 | ECHO               | no   | returns payload (test) |
-| 0x0010 | OPEN_SESSION       | no   | X25519 handshake → session keys |
-| 0x0011 | CLOSE_SESSION      | no   | zeroizes session keys |
-| 0x0012 | AUTH               | no   | PIN login (retry counter / lockout) |
-| 0x0013 | SESSION_DATA       | no   | outer cmd for an encrypted envelope |
-| 0x0014 | SET_PIN            | no¹  | change PIN (old verified inside) |
-| 0x0015 | INIT_PIN           | no   | set first PIN on an unprovisioned device |
-| 0x0020 | GENERATE_KEY       | yes  | random key → encrypted object |
-| 0x0023 | FIND_OBJECT        | no   | list object metadata (optional label) |
-| 0x0024 | DELETE_OBJECT      | yes  | zeroize slot |
-| 0x0025 | GET_OBJECT         | no   | one object's metadata |
-| 0x0026 | GET_PUBLIC         | no   | public key of Ed25519/X25519 (32 B) or ECDSA P-256 (64 B X\|\|Y) |
-| 0x0030 | HMAC               | yes  | HMAC-SHA256 with a stored key |
-| 0x0031 | WRAP               | yes  | wrapped export (AES-256-GCM under wrap key) |
-| 0x0032 | UNWRAP             | yes  | import a wrapped blob |
-| 0x0033 | SIGN               | yes  | Ed25519 signature |
-| 0x0040 | RANDOM             | no   | TRNG bytes |
-| 0x0041 | ENCRYPT            | yes  | AES-256-GCM with a stored key |
-| 0x0042 | DECRYPT            | yes  | AES-256-GCM decrypt + verify |
-| 0x0050 | GET_AUDIT_LOG      | no   | recent audit entries |
-| 0x0051 | GET_STORAGE        | no   | key-store capacity & fill level |
-| 0x0052 | GET_AUDIT_KEY      | yes  | export the 32-byte audit-chain HMAC key (for host-side verify) |
-| 0x0060/61/62 | FW_UPDATE_BEGIN/DATA/APPLY | yes | stage a signed image; bootloader verifies+applies on reset |
-| 0x0070 | TAMPER_TEST        | yes  | diagnostic: fire the tamper response (wipe RAM secrets, drop sessions) |
-| 0x0071 | FACTORY_RESET      | special | wipe keys+audit+PIN to unprovisioned; allowed when authed OR PIN locked-out |
-| 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED | — | reserved (WRAP/UNWRAP used instead) |
+| Code          | Command                    |  Auth   | Notes                                                                       |
+| ------------- | -------------------------- | :-----: | --------------------------------------------------------------------------- |
+| 0x0001        | PING                       |   no    | echoes magic `0x4F48534D`                                                   |
+| 0x0002        | GET_INFO                   |   no    | proto/fw version, 96-bit UID                                                |
+| 0x0003        | SELFTEST                   |   no    | crypto KAT (per-primitive results)                                          |
+| 0x0004        | ECHO                       |   no    | returns payload (test)                                                      |
+| 0x0010        | OPEN_SESSION               |   no    | X25519 handshake → session keys                                             |
+| 0x0011        | CLOSE_SESSION              |   no    | zeroizes session keys                                                       |
+| 0x0012        | AUTH                       |   no    | PIN login (retry counter / lockout)                                         |
+| 0x0013        | SESSION_DATA               |   no    | outer cmd for an encrypted envelope                                         |
+| 0x0014        | SET_PIN                    |   no¹   | change PIN (old verified inside)                                            |
+| 0x0015        | INIT_PIN                   |   no    | set first PIN on an unprovisioned device                                    |
+| 0x0020        | GENERATE_KEY               |   yes   | random key → encrypted object                                               |
+| 0x0023        | FIND_OBJECT                |   no    | list object metadata (optional label)                                       |
+| 0x0024        | DELETE_OBJECT              |   yes   | zeroize slot                                                                |
+| 0x0025        | GET_OBJECT                 |   no    | one object's metadata                                                       |
+| 0x0026        | GET_PUBLIC                 |   no    | public key of Ed25519/X25519 (32 B) or ECDSA P-256 (64 B X\|\|Y)            |
+| 0x0030        | HMAC                       |   yes   | HMAC-SHA256 with a stored key                                               |
+| 0x0031        | WRAP                       |   yes   | wrapped export (AES-256-GCM under wrap key)                                 |
+| 0x0032        | UNWRAP                     |   yes   | import a wrapped blob                                                       |
+| 0x0033        | SIGN                       |   yes   | Ed25519 signature                                                           |
+| 0x0040        | RANDOM                     |   no    | TRNG bytes                                                                  |
+| 0x0041        | ENCRYPT                    |   yes   | AES-256-GCM with a stored key                                               |
+| 0x0042        | DECRYPT                    |   yes   | AES-256-GCM decrypt + verify                                                |
+| 0x0050        | GET_AUDIT_LOG              |   no    | recent audit entries                                                        |
+| 0x0051        | GET_STORAGE                |   no    | key-store capacity & fill level                                             |
+| 0x0052        | GET_AUDIT_KEY              |   yes   | export the 32-byte audit-chain HMAC key (for host-side verify)              |
+| 0x0060/61/62  | FW_UPDATE_BEGIN/DATA/APPLY |   yes   | stage a signed image; bootloader verifies+applies on reset                  |
+| 0x0070        | TAMPER_TEST                |   yes   | diagnostic: fire the tamper response (wipe RAM secrets, drop sessions)      |
+| 0x0071        | FACTORY_RESET              | special | wipe keys+audit+PIN to unprovisioned; allowed when authed OR PIN locked-out |
+| 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED      |    —    | reserved (WRAP/UNWRAP used instead)                                         |
 
 ¹ SET_PIN is self-authenticating (verifies the old PIN). "Auth: yes" commands
-require a prior successful AUTH (login state is global per power cycle — see §8).
+require a prior successful AUTH (login state is global per power cycle).
 
 ### Status codes
+
 `OK`=0, `UNKNOWN_CMD`=1, `BAD_LENGTH`=2, `NOT_AUTHORIZED`=3, `NO_SESSION`=4,
 `INVALID_PARAM`=5, `NOT_IMPLEMENTED`=6, `KEY_VERIFY`=7, `LOCKED`=8,
 `STORE_FULL`=9 (no free object slot → PKCS#11 `CKR_DEVICE_MEMORY`), `INTERNAL`=0xFF.
@@ -169,6 +170,7 @@ objects than one message. The request is `hsm_find_req_t {offset, max, [label]}`
 (this page), `total` (all matches) and `next_offset`. Clients loop, advancing
 `offset` to `next_offset` until `next_offset == total`. `openhsm-cli list`, the
 PKCS#11 provider's object cache, and the ping harness all page this way.
+
 - Object types: AES-256, HMAC-SHA256, Ed25519, X25519, ECDSA P-256. Each slot stores
   immutable metadata (id, algorithm, capabilities, key_bits, exportable,
   auth_domain, created_seq, label) authenticated as the GCM AAD, then the
@@ -182,7 +184,7 @@ PKCS#11 provider's object cache, and the ping harness all page this way.
 **KEK confidentiality caveat:** the HUK is derived from the readable device UID
 with an in-firmware KDF, so the KEK is recoverable by anyone who can read the
 chip. "No plaintext key in flash" IS satisfied; KEK secrecy needs RDP-2 +
-TrustZone + a provisioned device secret (ROADMAP §22).
+TrustZone + a provisioned device secret.
 
 ---
 
@@ -231,20 +233,20 @@ TrustZone + a provisioned device secret (ROADMAP §22).
 
 ## 9. Source map
 
-| Path | Responsibility |
-|------|----------------|
-| `src/main.c` | clock/init, main loop |
-| `src/stm32u5xx_it.c` | SysTick + USB IRQ |
-| `src/usb/usbd_vendor.c` | vendor class, EP1 bulk, framing |
-| `src/usb/usbd_conf.c` / `usbd_desc.c` / `usb_device.c` | USB glue/descriptors |
-| `src/hsm/hsm_command.c` | dispatcher, routing, gating, audit hooks |
-| `src/hsm/hsm_session.c` | secure session |
-| `src/hsm/hsm_keystore.c` | objects, KEK, PIN, wrap/unwrap, encrypt/decrypt |
-| `src/hsm/hsm_flash.c` | bank-2 page erase/program |
-| `src/hsm/hsm_audit.c` | audit log |
-| `src/hsm/hsm_rng.c` | TRNG |
-| `src/crypto/hsm_aead.c` | AES-256-GCM (HW) |
-| `src/crypto/hsm_hash.c` | SHA-256/HMAC/HKDF (software) |
-| `src/crypto/hsm_eddsa.c` / `hsm_x25519.c` | Ed25519 / X25519 |
-| `src/crypto/hsm_crypto.c` | crypto init + KAT self-test |
-| `src/hsm/hsm_proto.h` | wire protocol (shared with the host) |
+| Path                                                   | Responsibility                                  |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| `src/main.c`                                           | clock/init, main loop                           |
+| `src/stm32u5xx_it.c`                                   | SysTick + USB IRQ                               |
+| `src/usb/usbd_vendor.c`                                | vendor class, EP1 bulk, framing                 |
+| `src/usb/usbd_conf.c` / `usbd_desc.c` / `usb_device.c` | USB glue/descriptors                            |
+| `src/hsm/hsm_command.c`                                | dispatcher, routing, gating, audit hooks        |
+| `src/hsm/hsm_session.c`                                | secure session                                  |
+| `src/hsm/hsm_keystore.c`                               | objects, KEK, PIN, wrap/unwrap, encrypt/decrypt |
+| `src/hsm/hsm_flash.c`                                  | bank-2 page erase/program                       |
+| `src/hsm/hsm_audit.c`                                  | audit log                                       |
+| `src/hsm/hsm_rng.c`                                    | TRNG                                            |
+| `src/crypto/hsm_aead.c`                                | AES-256-GCM (HW)                                |
+| `src/crypto/hsm_hash.c`                                | SHA-256/HMAC/HKDF (software)                    |
+| `src/crypto/hsm_eddsa.c` / `hsm_x25519.c`              | Ed25519 / X25519                                |
+| `src/crypto/hsm_crypto.c`                              | crypto init + KAT self-test                     |
+| `src/hsm/hsm_proto.h`                                  | wire protocol (shared with the host)            |

@@ -50,33 +50,49 @@ static const char *g_pin = "123456";
 static int hex2bin(const char *hex, uint8_t *out, int max)
 {
     int n = 0;
-    for (const char *p = hex; p[0] && p[1]; p += 2) {
-        if (n >= max) return -1;
+    for (const char *p = hex; p[0] && p[1]; p += 2)
+    {
+        if (n >= max)
+            return -1;
         unsigned v;
-        if (sscanf(p, "%2x", &v) != 1) return -1;
+        if (sscanf(p, "%2x", &v) != 1)
+            return -1;
         out[n++] = (uint8_t)v;
     }
     return n;
 }
 static void printhex(const uint8_t *b, int n)
 {
-    for (int i = 0; i < n; i++) printf("%02x", b[i]);
+    for (int i = 0; i < n; i++)
+        printf("%02x", b[i]);
     printf("\n");
 }
 static const char *status_str(uint16_t s)
 {
-    switch (s) {
-    case HSM_OK: return "OK";
-    case HSM_ERR_UNKNOWN_CMD: return "unknown command";
-    case HSM_ERR_BAD_LENGTH: return "bad length";
-    case HSM_ERR_NOT_AUTHORIZED: return "not authorized";
-    case HSM_ERR_NO_SESSION: return "no session";
-    case HSM_ERR_INVALID_PARAM: return "invalid parameter";
-    case HSM_ERR_NOT_IMPLEMENTED: return "not implemented";
-    case HSM_ERR_KEY_VERIFY: return "key self-verify failed";
-    case HSM_ERR_LOCKED: return "locked (PIN tries exhausted)";
-    case HSM_ERR_STORE_FULL: return "store full (no free slot)";
-    default: return "internal error";
+    switch (s)
+    {
+    case HSM_OK:
+        return "OK";
+    case HSM_ERR_UNKNOWN_CMD:
+        return "unknown command";
+    case HSM_ERR_BAD_LENGTH:
+        return "bad length";
+    case HSM_ERR_NOT_AUTHORIZED:
+        return "not authorized";
+    case HSM_ERR_NO_SESSION:
+        return "no session";
+    case HSM_ERR_INVALID_PARAM:
+        return "invalid parameter";
+    case HSM_ERR_NOT_IMPLEMENTED:
+        return "not implemented";
+    case HSM_ERR_KEY_VERIFY:
+        return "key self-verify failed";
+    case HSM_ERR_LOCKED:
+        return "locked (PIN tries exhausted)";
+    case HSM_ERR_STORE_FULL:
+        return "store full (no free slot)";
+    default:
+        return "internal error";
     }
 }
 
@@ -85,80 +101,128 @@ static uint16_t cmd(ohsm_ctx *c, uint16_t command, const uint8_t *p, uint16_t pl
                     uint8_t *resp, int cap, const uint8_t **out, int *olen)
 {
     int rl = 0;
-    if (ohsm_cmd(c, command, p, plen, resp, cap, &rl) != 0) return HSM_ERR_INTERNAL;
+    if (ohsm_cmd(c, command, p, plen, resp, cap, &rl) != 0)
+        return HSM_ERR_INTERNAL;
     hsm_header_t *rh = (hsm_header_t *)resp;
-    if (out) *out = resp + HSM_HEADER_SIZE;
-    if (olen) *olen = (int)rh->payload_length;
+    if (out)
+        *out = resp + HSM_HEADER_SIZE;
+    if (olen)
+        *olen = (int)rh->payload_length;
     return rh->status;
 }
 
 static int login(ohsm_ctx *c)
 {
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
                       resp, sizeof(resp), NULL, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "login failed: %s\n", status_str(st)); return -1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "login failed: %s\n", status_str(st));
+        return -1;
+    }
     return 0;
 }
 
 static int key_alg(const char *t)
 {
-    if (!strcmp(t, "aes")) return HSM_KEY_AES256;
-    if (!strcmp(t, "hmac")) return HSM_KEY_HMAC256;
-    if (!strcmp(t, "ed25519")) return HSM_KEY_ED25519;
-    if (!strcmp(t, "x25519")) return HSM_KEY_X25519;
-    if (!strcmp(t, "ecdsa") || !strcmp(t, "ecdsa256")) return HSM_KEY_ECDSA_P256;
+    if (!strcmp(t, "aes"))
+        return HSM_KEY_AES256;
+    if (!strcmp(t, "hmac"))
+        return HSM_KEY_HMAC256;
+    if (!strcmp(t, "ed25519"))
+        return HSM_KEY_ED25519;
+    if (!strcmp(t, "x25519"))
+        return HSM_KEY_X25519;
+    if (!strcmp(t, "ecdsa") || !strcmp(t, "ecdsa256"))
+        return HSM_KEY_ECDSA_P256;
     return -1;
 }
 static const char *alg_name(uint16_t a)
 {
-    switch (a) {
-    case HSM_KEY_AES256: return "aes256"; case HSM_KEY_HMAC256: return "hmac256";
-    case HSM_KEY_ED25519: return "ed25519"; case HSM_KEY_X25519: return "x25519";
-    case HSM_KEY_ECDSA_P256: return "ecdsa-p256";
-    default: return "?";
+    switch (a)
+    {
+    case HSM_KEY_AES256:
+        return "aes256";
+    case HSM_KEY_HMAC256:
+        return "hmac256";
+    case HSM_KEY_ED25519:
+        return "ed25519";
+    case HSM_KEY_X25519:
+        return "x25519";
+    case HSM_KEY_ECDSA_P256:
+        return "ecdsa-p256";
+    default:
+        return "?";
     }
 }
 static const char *ev_name(uint16_t e)
 {
-    static const char *n[] = {"?","BOOT","AUTH_OK","AUTH_FAIL","KEYGEN","KEYDEL",
-        "SIGN","HMAC","WRAP","UNWRAP","ENCRYPT","DECRYPT","SET_PIN","TAMPER","FACTORY"};
+    static const char *n[] = {"?", "BOOT", "AUTH_OK", "AUTH_FAIL", "KEYGEN", "KEYDEL",
+                              "SIGN", "HMAC", "WRAP", "UNWRAP", "ENCRYPT", "DECRYPT", "SET_PIN", "TAMPER", "FACTORY"};
     return (e <= 14) ? n[e] : "?";
 }
 
 /* ---- subcommands --------------------------------------------------------- */
 static int c_ping(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_PING, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "ping: %s\n", status_str(st)); return 1; }
-    uint32_t magic; memcpy(&magic, o, 4);
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "ping: %s\n", status_str(st));
+        return 1;
+    }
+    uint32_t magic;
+    memcpy(&magic, o, 4);
     printf("pong magic=0x%08x %s\n", magic, magic == HSM_PING_MAGIC ? "OK" : "BAD");
     return 0;
 }
 static int c_info(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_INFO, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "info: %s\n", status_str(st)); return 1; }
-    hsm_info_t in; memcpy(&in, o, sizeof(in));
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "info: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_info_t in;
+    memcpy(&in, o, sizeof(in));
     printf("proto=0x%04x fw=%u.%u serial=", in.proto_version,
            (in.fw_version >> 8) & 0xFF, in.fw_version & 0xFF);
-    for (int i = 0; i < 12; i++) printf("%02x", in.serial[i]);
+    for (int i = 0; i < 12; i++)
+        printf("%02x", in.serial[i]);
     printf("\n");
     return 0;
 }
 static int c_storage(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_STORAGE, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "storage: %s\n", status_str(st)); return 1; }
-    hsm_storage_info_t s; memcpy(&s, o, sizeof(s));
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "storage: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_storage_info_t s;
+    memcpy(&s, o, sizeof(s));
     unsigned free_slots = (s.max_objects > s.used_objects)
-                          ? (unsigned)(s.max_objects - s.used_objects) : 0u;
+                              ? (unsigned)(s.max_objects - s.used_objects)
+                              : 0u;
     double pct = s.max_objects ? (100.0 * s.used_objects / s.max_objects) : 0.0;
     printf("objects:  %u / %u used  (%u free, %.0f%% full)\n",
            s.used_objects, s.max_objects, free_slots, pct);
@@ -168,71 +232,120 @@ static int c_storage(ohsm_ctx *c, int ac, char **av)
            s.region_size, s.store_bytes,
            s.region_size > s.store_bytes ? s.region_size - s.store_bytes : 0u);
     printf("capacity: region physically holds %u slots; firmware limit is %u "
-           "(raise HSM_MAX_OBJECTS for more)\n", s.region_capacity, s.max_objects);
+           "(raise HSM_MAX_OBJECTS for more)\n",
+           s.region_capacity, s.max_objects);
     return 0;
 }
 static int c_selftest(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_SELFTEST, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "selftest: %s\n", status_str(st)); return 1; }
-    hsm_selftest_t t; memcpy(&t, o, sizeof(t));
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "selftest: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_selftest_t t;
+    memcpy(&t, o, sizeof(t));
     printf("sha256=%s hmac=%s hkdf=%s gcm-enc=%s gcm-dec=%s x25519=%s x25519-pub=%s ecdsa=%s  [%s]\n",
-           t.sha256?"FAIL":"ok", t.hmac?"FAIL":"ok", t.hkdf?"FAIL":"ok",
-           t.aesgcm_enc?"FAIL":"ok", t.aesgcm_dec?"FAIL":"ok", t.x25519?"FAIL":"ok",
-           t.x25519_pub?"FAIL":"ok", t.ecdsa_p256?"FAIL":"ok", t.overall?"FAILED":"ALL PASS");
+           t.sha256 ? "FAIL" : "ok", t.hmac ? "FAIL" : "ok", t.hkdf ? "FAIL" : "ok",
+           t.aesgcm_enc ? "FAIL" : "ok", t.aesgcm_dec ? "FAIL" : "ok", t.x25519 ? "FAIL" : "ok",
+           t.x25519_pub ? "FAIL" : "ok", t.ecdsa_p256 ? "FAIL" : "ok", t.overall ? "FAILED" : "ALL PASS");
     return t.overall ? 1 : 0;
 }
 static int c_random(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: random <n>\n"); return 2; }
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: random <n>\n");
+        return 2;
+    }
     uint16_t n = (uint16_t)atoi(av[0]);
-    uint8_t req[2] = { (uint8_t)n, (uint8_t)(n >> 8) };
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t req[2] = {(uint8_t)n, (uint8_t)(n >> 8)};
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_RANDOM, req, 2, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "random: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "random: %s\n", status_str(st));
+        return 1;
+    }
     printhex(o, ol);
     return 0;
 }
 static int c_list(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t offset = 0, total = 0, shown = 0;
     int header_done = 0;
-    do {
-        hsm_find_req_t rq; memset(&rq, 0, sizeof(rq));
-        rq.offset = offset;            /* {offset, max=0}: no label filter */
+    do
+    {
+        hsm_find_req_t rq;
+        memset(&rq, 0, sizeof(rq));
+        rq.offset = offset; /* {offset, max=0}: no label filter */
         uint16_t st = cmd(c, HSM_CMD_FIND_OBJECT, (uint8_t *)&rq, 4,
                           resp, sizeof(resp), &o, &ol);
-        if (st != HSM_OK) { fprintf(stderr, "list: %s\n", status_str(st)); return 1; }
-        hsm_find_resp_t fr; memcpy(&fr, o, sizeof(fr));
+        if (st != HSM_OK)
+        {
+            fprintf(stderr, "list: %s\n", status_str(st));
+            return 1;
+        }
+        hsm_find_resp_t fr;
+        memcpy(&fr, o, sizeof(fr));
         total = fr.total;
-        if (!header_done) { printf("%u object(s):\n", total); header_done = 1; }
+        if (!header_done)
+        {
+            printf("%u object(s):\n", total);
+            header_done = 1;
+        }
         const uint8_t *p = o + sizeof(fr);
-        for (int i = 0; i < fr.count; i++) {
-            hsm_obj_info_t k; memcpy(&k, p + i * sizeof(k), sizeof(k));
-            char lbl[HSM_LABEL_LEN + 1] = {0}; memcpy(lbl, k.label, HSM_LABEL_LEN);
+        for (int i = 0; i < fr.count; i++)
+        {
+            hsm_obj_info_t k;
+            memcpy(&k, p + i * sizeof(k), sizeof(k));
+            char lbl[HSM_LABEL_LEN + 1] = {0};
+            memcpy(lbl, k.label, HSM_LABEL_LEN);
             printf("  id=%-3u %-8s caps=0x%04x bits=%u exp=%u usage=%u label=\"%s\"\n",
                    k.id, alg_name(k.algorithm), k.capabilities, k.key_bits,
                    k.exportable, k.usage_counter, lbl);
         }
         shown += fr.count;
-        if (fr.count == 0) break;      /* guard against a stuck cursor */
+        if (fr.count == 0)
+            break; /* guard against a stuck cursor */
         offset = fr.next_offset;
     } while (shown < total);
     return 0;
 }
 static int c_get(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: get <id>\n"); return 2; }
-    hsm_objid_req_t rq = { .id = (uint32_t)strtoul(av[0], NULL, 0) };
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: get <id>\n");
+        return 2;
+    }
+    hsm_objid_req_t rq = {.id = (uint32_t)strtoul(av[0], NULL, 0)};
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_OBJECT, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "get: %s\n", status_str(st)); return 1; }
-    hsm_obj_info_t k; memcpy(&k, o, sizeof(k));
-    char lbl[HSM_LABEL_LEN + 1] = {0}; memcpy(lbl, k.label, HSM_LABEL_LEN);
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "get: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_obj_info_t k;
+    memcpy(&k, o, sizeof(k));
+    char lbl[HSM_LABEL_LEN + 1] = {0};
+    memcpy(lbl, k.label, HSM_LABEL_LEN);
     printf("id=%u alg=%s caps=0x%04x bits=%u exp=%u usage=%u seq=%u label=\"%s\"\n",
            k.id, alg_name(k.algorithm), k.capabilities, k.key_bits, k.exportable,
            k.usage_counter, k.created_seq, lbl);
@@ -240,141 +353,270 @@ static int c_get(ohsm_ctx *c, int ac, char **av)
 }
 static int c_pubkey(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: pubkey <id>\n"); return 2; }
-    if (login(c)) return 1;
-    hsm_objid_req_t rq = { .id = (uint32_t)strtoul(av[0], NULL, 0) };
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: pubkey <id>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    hsm_objid_req_t rq = {.id = (uint32_t)strtoul(av[0], NULL, 0)};
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_PUBLIC, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "pubkey: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "pubkey: %s\n", status_str(st));
+        return 1;
+    }
     printhex(o, ol);
     return 0;
 }
 static int c_gen(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 2) { fprintf(stderr, "usage: gen <aes|hmac|ed25519|x25519> <label> [caps]\n"); return 2; }
-    int alg = key_alg(av[0]);
-    if (alg < 0) { fprintf(stderr, "unknown type %s\n", av[0]); return 2; }
-    if (login(c)) return 1;
-    hsm_genkey_req_t rq; memset(&rq, 0, sizeof(rq));
-    rq.algorithm = (uint16_t)alg; rq.key_bits = 256;
-    /* default caps per type, or parse the comma list */
-    if (ac >= 3) {
-        char *caps = av[2], *t;
-        for (t = strtok(caps, ","); t; t = strtok(NULL, ",")) {
-            if (!strcmp(t, "enc")) rq.capabilities |= HSM_CAP_ENCRYPT;
-            else if (!strcmp(t, "dec")) rq.capabilities |= HSM_CAP_DECRYPT;
-            else if (!strcmp(t, "sign")) rq.capabilities |= HSM_CAP_SIGN;
-            else if (!strcmp(t, "verify")) rq.capabilities |= HSM_CAP_VERIFY;
-            else if (!strcmp(t, "wrap")) rq.capabilities |= HSM_CAP_WRAP;
-            else if (!strcmp(t, "unwrap")) rq.capabilities |= HSM_CAP_UNWRAP;
-            else if (!strcmp(t, "derive")) rq.capabilities |= HSM_CAP_DERIVE;
-            else if (!strcmp(t, "exp")) rq.exportable = 1;
-        }
-    } else {
-        if (alg == HSM_KEY_AES256) rq.capabilities = HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT;
-        else rq.capabilities = HSM_CAP_SIGN;
+    if (ac < 2)
+    {
+        fprintf(stderr, "usage: gen <aes|hmac|ed25519|x25519> <label> [caps]\n");
+        return 2;
     }
-    size_t ll = strlen(av[1]); if (ll > HSM_LABEL_LEN) ll = HSM_LABEL_LEN;
+    int alg = key_alg(av[0]);
+    if (alg < 0)
+    {
+        fprintf(stderr, "unknown type %s\n", av[0]);
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    hsm_genkey_req_t rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.algorithm = (uint16_t)alg;
+    rq.key_bits = 256;
+    /* default caps per type, or parse the comma list */
+    if (ac >= 3)
+    {
+        char *caps = av[2], *t;
+        for (t = strtok(caps, ","); t; t = strtok(NULL, ","))
+        {
+            if (!strcmp(t, "enc"))
+                rq.capabilities |= HSM_CAP_ENCRYPT;
+            else if (!strcmp(t, "dec"))
+                rq.capabilities |= HSM_CAP_DECRYPT;
+            else if (!strcmp(t, "sign"))
+                rq.capabilities |= HSM_CAP_SIGN;
+            else if (!strcmp(t, "verify"))
+                rq.capabilities |= HSM_CAP_VERIFY;
+            else if (!strcmp(t, "wrap"))
+                rq.capabilities |= HSM_CAP_WRAP;
+            else if (!strcmp(t, "unwrap"))
+                rq.capabilities |= HSM_CAP_UNWRAP;
+            else if (!strcmp(t, "derive"))
+                rq.capabilities |= HSM_CAP_DERIVE;
+            else if (!strcmp(t, "exp"))
+                rq.exportable = 1;
+        }
+    }
+    else
+    {
+        if (alg == HSM_KEY_AES256)
+            rq.capabilities = HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT;
+        else
+            rq.capabilities = HSM_CAP_SIGN;
+    }
+    size_t ll = strlen(av[1]);
+    if (ll > HSM_LABEL_LEN)
+        ll = HSM_LABEL_LEN;
     memcpy(rq.label, av[1], ll);
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "gen: %s\n", status_str(st)); return 1; }
-    hsm_obj_info_t k; memcpy(&k, o, sizeof(k));
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "gen: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_obj_info_t k;
+    memcpy(&k, o, sizeof(k));
     printf("generated id=%u %s caps=0x%04x label=\"%s\"\n", k.id, alg_name(k.algorithm),
            k.capabilities, av[1]);
     return 0;
 }
 static int c_del(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: del <id>\n"); return 2; }
-    if (login(c)) return 1;
-    hsm_objid_req_t rq = { .id = (uint32_t)strtoul(av[0], NULL, 0) };
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: del <id>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    hsm_objid_req_t rq = {.id = (uint32_t)strtoul(av[0], NULL, 0)};
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), NULL, &ol);
     printf("delete id=%lu: %s\n", strtoul(av[0], NULL, 0), status_str(st));
     return st == HSM_OK ? 0 : 1;
 }
 static int c_keyop(ohsm_ctx *c, uint16_t command, int ac, char **av, const char *name)
 {
-    if (ac < 2) { fprintf(stderr, "usage: %s <id> <message>\n", name); return 2; }
-    if (login(c)) return 1;
-    uint8_t req[HSM_MAX_MSG]; size_t mlen = strlen(av[1]);
-    hsm_keyop_req_t op = { .id = (uint32_t)strtoul(av[0], NULL, 0), .msg_len = (uint16_t)mlen };
+    if (ac < 2)
+    {
+        fprintf(stderr, "usage: %s <id> <message>\n", name);
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    uint8_t req[HSM_MAX_MSG];
+    size_t mlen = strlen(av[1]);
+    hsm_keyop_req_t op = {.id = (uint32_t)strtoul(av[0], NULL, 0), .msg_len = (uint16_t)mlen};
     memcpy(req, &op, sizeof(op));
     memcpy(req + sizeof(op), av[1], mlen);
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, command, req, (uint16_t)(sizeof(op) + mlen), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "%s: %s\n", name, status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "%s: %s\n", name, status_str(st));
+        return 1;
+    }
     printhex(o, ol);
     return 0;
 }
 static int c_encrypt(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 2) { fprintf(stderr, "usage: encrypt <id> <hexdata>\n"); return 2; }
-    if (login(c)) return 1;
-    uint8_t pt[256]; int ptlen = hex2bin(av[1], pt, sizeof(pt));
-    if (ptlen < 0) { fprintf(stderr, "bad hex\n"); return 2; }
+    if (ac < 2)
+    {
+        fprintf(stderr, "usage: encrypt <id> <hexdata>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    uint8_t pt[256];
+    int ptlen = hex2bin(av[1], pt, sizeof(pt));
+    if (ptlen < 0)
+    {
+        fprintf(stderr, "bad hex\n");
+        return 2;
+    }
     uint8_t req[HSM_MAX_MSG];
-    hsm_aead_req_t r = { .key_id = (uint32_t)strtoul(av[0], NULL, 0), .aad_len = 0, .data_len = (uint16_t)ptlen };
+    hsm_aead_req_t r = {.key_id = (uint32_t)strtoul(av[0], NULL, 0), .aad_len = 0, .data_len = (uint16_t)ptlen};
     randombytes_buf(r.nonce, 12);
     memcpy(req, &r, sizeof(r));
     memcpy(req + sizeof(r), pt, ptlen);
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_ENCRYPT, req, (uint16_t)(sizeof(r) + ptlen), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "encrypt: %s\n", status_str(st)); return 1; }
-    printf("nonce="); printhex(r.nonce, 12);
-    printf("ct+tag="); printhex(o, ol);
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "encrypt: %s\n", status_str(st));
+        return 1;
+    }
+    printf("nonce=");
+    printhex(r.nonce, 12);
+    printf("ct+tag=");
+    printhex(o, ol);
     return 0;
 }
 static int c_decrypt(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 3) { fprintf(stderr, "usage: decrypt <id> <noncehex> <ct+taghex>\n"); return 2; }
-    if (login(c)) return 1;
+    if (ac < 3)
+    {
+        fprintf(stderr, "usage: decrypt <id> <noncehex> <ct+taghex>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
     uint8_t nonce[12], ct[272];
-    if (hex2bin(av[1], nonce, 12) != 12) { fprintf(stderr, "nonce must be 12 bytes\n"); return 2; }
+    if (hex2bin(av[1], nonce, 12) != 12)
+    {
+        fprintf(stderr, "nonce must be 12 bytes\n");
+        return 2;
+    }
     int ctlen = hex2bin(av[2], ct, sizeof(ct));
-    if (ctlen < 16) { fprintf(stderr, "ct+tag too short\n"); return 2; }
+    if (ctlen < 16)
+    {
+        fprintf(stderr, "ct+tag too short\n");
+        return 2;
+    }
     uint8_t req[HSM_MAX_MSG];
-    hsm_aead_req_t r = { .key_id = (uint32_t)strtoul(av[0], NULL, 0), .aad_len = 0,
-                         .data_len = (uint16_t)(ctlen - 16) };
+    hsm_aead_req_t r = {.key_id = (uint32_t)strtoul(av[0], NULL, 0), .aad_len = 0, .data_len = (uint16_t)(ctlen - 16)};
     memcpy(r.nonce, nonce, 12);
     memcpy(req, &r, sizeof(r));
     memcpy(req + sizeof(r), ct, ctlen);
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_DECRYPT, req, (uint16_t)(sizeof(r) + ctlen), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "decrypt: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "decrypt: %s\n", status_str(st));
+        return 1;
+    }
     printhex(o, ol);
     return 0;
 }
 static int c_wrap(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 2) { fprintf(stderr, "usage: wrap <wrapid> <targetid>\n"); return 2; }
-    if (login(c)) return 1;
-    hsm_wrap_req_t r = { .wrap_id = (uint32_t)strtoul(av[0], NULL, 0),
-                         .target_id = (uint32_t)strtoul(av[1], NULL, 0) };
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    if (ac < 2)
+    {
+        fprintf(stderr, "usage: wrap <wrapid> <targetid>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
+    hsm_wrap_req_t r = {.wrap_id = (uint32_t)strtoul(av[0], NULL, 0),
+                        .target_id = (uint32_t)strtoul(av[1], NULL, 0)};
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_WRAP, (uint8_t *)&r, sizeof(r), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "wrap: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "wrap: %s\n", status_str(st));
+        return 1;
+    }
     printhex(o, ol);
     return 0;
 }
 static int c_unwrap(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 3) { fprintf(stderr, "usage: unwrap <wrapid> <label> <blobhex>\n"); return 2; }
-    if (login(c)) return 1;
+    if (ac < 3)
+    {
+        fprintf(stderr, "usage: unwrap <wrapid> <label> <blobhex>\n");
+        return 2;
+    }
+    if (login(c))
+        return 1;
     uint8_t req[HSM_MAX_MSG];
-    hsm_unwrap_req_t r; memset(&r, 0, sizeof(r));
+    hsm_unwrap_req_t r;
+    memset(&r, 0, sizeof(r));
     r.wrap_id = (uint32_t)strtoul(av[0], NULL, 0);
     r.capabilities = HSM_CAP_SIGN;
-    size_t ll = strlen(av[1]); if (ll > HSM_LABEL_LEN) ll = HSM_LABEL_LEN;
+    size_t ll = strlen(av[1]);
+    if (ll > HSM_LABEL_LEN)
+        ll = HSM_LABEL_LEN;
     memcpy(r.label, av[1], ll);
     int blen = hex2bin(av[2], req + sizeof(r), (int)(sizeof(req) - sizeof(r)));
-    if (blen < 0) { fprintf(stderr, "bad blob hex\n"); return 2; }
+    if (blen < 0)
+    {
+        fprintf(stderr, "bad blob hex\n");
+        return 2;
+    }
     memcpy(req, &r, sizeof(r));
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_UNWRAP, req, (uint16_t)(sizeof(r) + blen), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "unwrap: %s\n", status_str(st)); return 1; }
-    hsm_obj_info_t k; memcpy(&k, o, sizeof(k));
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "unwrap: %s\n", status_str(st));
+        return 1;
+    }
+    hsm_obj_info_t k;
+    memcpy(&k, o, sizeof(k));
     printf("unwrapped id=%u %s label=\"%s\"\n", k.id, alg_name(k.algorithm), av[1]);
     return 0;
 }
@@ -382,10 +624,12 @@ static int c_unwrap(ohsm_ctx *c, int ac, char **av)
 static uint16_t audit_page(ohsm_ctx *c, uint16_t offset, hsm_auditlog_resp_t *ar,
                            hsm_audit_entry_t *out, uint8_t *resp, int cap)
 {
-    hsm_auditlog_req_t rq = { .offset = offset, .max_entries = 0 };  /* 0 = page full */
-    const uint8_t *o; int ol;
+    hsm_auditlog_req_t rq = {.offset = offset, .max_entries = 0}; /* 0 = page full */
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_AUDIT_LOG, (uint8_t *)&rq, sizeof(rq), resp, cap, &o, &ol);
-    if (st != HSM_OK) return st;
+    if (st != HSM_OK)
+        return st;
     memcpy(ar, o, sizeof(*ar));
     memcpy(out, o + sizeof(*ar), ar->count * sizeof(hsm_audit_entry_t));
     return HSM_OK;
@@ -396,10 +640,16 @@ static int c_audit(ohsm_ctx *c, int ac, char **av)
     int want_all = (ac >= 1 && strcmp(av[0], "all") == 0);
     uint32_t n = want_all ? 0 : (uint32_t)(ac >= 1 ? strtoul(av[0], NULL, 0) : 20);
 
-    uint8_t resp[HSM_MAX_MSG]; hsm_auditlog_resp_t ar; hsm_audit_entry_t ent[32];
+    uint8_t resp[HSM_MAX_MSG];
+    hsm_auditlog_resp_t ar;
+    hsm_audit_entry_t ent[32];
     /* Probe for total / next_seq. */
     uint16_t st = audit_page(c, 0, &ar, ent, resp, sizeof(resp));
-    if (st != HSM_OK) { fprintf(stderr, "audit: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "audit: %s\n", status_str(st));
+        return 1;
+    }
     uint16_t total = ar.total;
     uint16_t start = (want_all || total <= n) ? 0 : (uint16_t)(total - n);
 
@@ -407,13 +657,21 @@ static int c_audit(ohsm_ctx *c, int ac, char **av)
            want_all ? total : (uint16_t)(total - start), total, ar.next_seq);
 
     uint16_t offset = start;
-    while (offset < total) {
+    while (offset < total)
+    {
         st = audit_page(c, offset, &ar, ent, resp, sizeof(resp));
-        if (st != HSM_OK) { fprintf(stderr, "audit: %s\n", status_str(st)); return 1; }
-        if (ar.count == 0) break;
-        for (int i = 0; i < ar.count; i++) {
+        if (st != HSM_OK)
+        {
+            fprintf(stderr, "audit: %s\n", status_str(st));
+            return 1;
+        }
+        if (ar.count == 0)
+            break;
+        for (int i = 0; i < ar.count; i++)
+        {
             printf("  seq=%-6u %-9s arg=%-4u mac=", ent[i].seq, ev_name(ent[i].event), ent[i].arg);
-            for (int j = 0; j < 4; j++) printf("%02x", ent[i].mac[j]);
+            for (int j = 0; j < 4; j++)
+                printf("%02x", ent[i].mac[j]);
             printf("\n");
         }
         offset = ar.next_offset;
@@ -422,12 +680,18 @@ static int c_audit(ohsm_ctx *c, int ac, char **av)
 }
 static int c_setpin(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 2) { fprintf(stderr, "usage: setpin <old> <new>\n"); return 2; }
+    if (ac < 2)
+    {
+        fprintf(stderr, "usage: setpin <old> <new>\n");
+        return 2;
+    }
     uint8_t req[2 + 64];
-    req[0] = (uint8_t)strlen(av[0]); req[1] = (uint8_t)strlen(av[1]);
+    req[0] = (uint8_t)strlen(av[0]);
+    req[1] = (uint8_t)strlen(av[1]);
     memcpy(req + 2, av[0], strlen(av[0]));
     memcpy(req + 2 + strlen(av[0]), av[1], strlen(av[1]));
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_SET_PIN, req, (uint16_t)(2 + strlen(av[0]) + strlen(av[1])),
                       resp, sizeof(resp), NULL, &ol);
     printf("setpin: %s\n", status_str(st));
@@ -437,66 +701,101 @@ static int c_setpin(ohsm_ctx *c, int ac, char **av)
 /* Generate a throwaway key for benchmarking; returns its id (0 on failure). */
 static uint32_t bench_gen(ohsm_ctx *c, uint16_t alg, uint16_t caps, const char *label)
 {
-    hsm_genkey_req_t rq; memset(&rq, 0, sizeof(rq));
-    rq.algorithm = alg; rq.key_bits = 256; rq.capabilities = caps;
-    size_t ll = strlen(label); if (ll > HSM_LABEL_LEN) ll = HSM_LABEL_LEN;
+    hsm_genkey_req_t rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.algorithm = alg;
+    rq.key_bits = 256;
+    rq.capabilities = caps;
+    size_t ll = strlen(label);
+    if (ll > HSM_LABEL_LEN)
+        ll = HSM_LABEL_LEN;
     memcpy(rq.label, label, ll);
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     if (cmd(c, HSM_CMD_GENERATE_KEY, (uint8_t *)&rq, sizeof(rq), resp, sizeof(resp), &o, &ol) != HSM_OK)
         return 0;
-    hsm_obj_info_t k; memcpy(&k, o, sizeof(k));
+    hsm_obj_info_t k;
+    memcpy(&k, o, sizeof(k));
     return k.id;
 }
 
-/* Throughput benchmark vs spec §20 targets (AES-GCM >100/s, HMAC >500/s). */
+/* Throughput benchmark. */
 static int c_bench(ohsm_ctx *c, int ac, char **av)
 {
-    double dur   = (ac >= 1) ? atof(av[0]) : 2.0;     /* seconds per test */
+    double dur = (ac >= 1) ? atof(av[0]) : 2.0;             /* seconds per test */
     uint16_t plen = (ac >= 2) ? (uint16_t)atoi(av[1]) : 32; /* payload bytes */
-    if (dur <= 0) dur = 2.0;
-    if (plen == 0 || plen > 256) plen = 32;
-    if (login(c)) return 1;
+    if (dur <= 0)
+        dur = 2.0;
+    if (plen == 0 || plen > 256)
+        plen = 32;
+    if (login(c))
+        return 1;
 
     uint32_t aes = bench_gen(c, HSM_KEY_AES256, HSM_CAP_ENCRYPT | HSM_CAP_DECRYPT, "bench-aes");
     uint32_t mac = bench_gen(c, HSM_KEY_HMAC256, HSM_CAP_SIGN, "bench-hmac");
-    if (!aes || !mac) { fprintf(stderr, "bench: key generation failed (store full?)\n"); return 1; }
+    if (!aes || !mac)
+    {
+        fprintf(stderr, "bench: key generation failed (store full?)\n");
+        return 1;
+    }
 
-    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
-    uint8_t data[256]; randombytes_buf(data, plen);
+    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
+    uint8_t data[256];
+    randombytes_buf(data, plen);
     int rc = 0;
 
     printf("benchmark: payload=%u B, %.1f s per test, over secure session\n", plen, dur);
 
     /* ---- AES-256-GCM encrypt ---- */
-    unsigned long n = 0; double t0 = now_s(), el = 0;
-    do {
-        hsm_aead_req_t r = { .key_id = aes, .aad_len = 0, .data_len = plen };
+    unsigned long n = 0;
+    double t0 = now_s(), el = 0;
+    do
+    {
+        hsm_aead_req_t r = {.key_id = aes, .aad_len = 0, .data_len = plen};
         randombytes_buf(r.nonce, 12);
-        memcpy(req, &r, sizeof(r)); memcpy(req + sizeof(r), data, plen);
-        if (cmd(c, HSM_CMD_ENCRYPT, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK) {
-            fprintf(stderr, "bench: ENCRYPT failed\n"); rc = 1; break;
+        memcpy(req, &r, sizeof(r));
+        memcpy(req + sizeof(r), data, plen);
+        if (cmd(c, HSM_CMD_ENCRYPT, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK)
+        {
+            fprintf(stderr, "bench: ENCRYPT failed\n");
+            rc = 1;
+            break;
         }
-        n++; el = now_s() - t0;
+        n++;
+        el = now_s() - t0;
     } while (el < dur);
     double aes_ops = n / el;
     printf("  AES-256-GCM: %8.1f ops/s  (%.2f ms/op, n=%lu)  target >100/s  [%s]\n",
            aes_ops, 1000.0 / aes_ops, n, aes_ops > 100.0 ? "PASS" : "FAIL");
-    if (aes_ops <= 100.0) rc = 1;
+    if (aes_ops <= 100.0)
+        rc = 1;
 
     /* ---- HMAC-SHA256 ---- */
-    n = 0; t0 = now_s(); el = 0;
-    do {
-        hsm_keyop_req_t r = { .id = mac, .msg_len = plen };
-        memcpy(req, &r, sizeof(r)); memcpy(req + sizeof(r), data, plen);
-        if (cmd(c, HSM_CMD_HMAC, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK) {
-            fprintf(stderr, "bench: HMAC failed\n"); rc = 1; break;
+    n = 0;
+    t0 = now_s();
+    el = 0;
+    do
+    {
+        hsm_keyop_req_t r = {.id = mac, .msg_len = plen};
+        memcpy(req, &r, sizeof(r));
+        memcpy(req + sizeof(r), data, plen);
+        if (cmd(c, HSM_CMD_HMAC, req, (uint16_t)(sizeof(r) + plen), resp, sizeof(resp), &o, &ol) != HSM_OK)
+        {
+            fprintf(stderr, "bench: HMAC failed\n");
+            rc = 1;
+            break;
         }
-        n++; el = now_s() - t0;
+        n++;
+        el = now_s() - t0;
     } while (el < dur);
     double mac_ops = n / el;
     printf("  HMAC-SHA256: %8.1f ops/s  (%.2f ms/op, n=%lu)  target >500/s  [%s]\n",
            mac_ops, 1000.0 / mac_ops, n, mac_ops > 500.0 ? "PASS" : "FAIL");
-    if (mac_ops <= 500.0) rc = 1;
+    if (mac_ops <= 500.0)
+        rc = 1;
 
     /* ---- unseal proxy: one AES-GCM op is the HSM's whole per-unseal cost ---- */
     printf("  unseal note: OpenBao unwraps its master key with ONE AES-GCM op\n"
@@ -506,15 +805,22 @@ static int c_bench(ohsm_ctx *c, int ac, char **av)
 
     /* cleanup */
     hsm_objid_req_t d;
-    d.id = aes; cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
-    d.id = mac; cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
+    d.id = aes;
+    cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
+    d.id = mac;
+    cmd(c, HSM_CMD_DELETE_OBJECT, (uint8_t *)&d, sizeof(d), resp, sizeof(resp), NULL, &ol);
     return rc;
 }
 
 static int c_initpin(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: initpin <pin>\n"); return 2; }
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: initpin <pin>\n");
+        return 2;
+    }
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_INIT_PIN, (const uint8_t *)av[0], (uint16_t)strlen(av[0]),
                       resp, sizeof(resp), NULL, &ol);
     printf("initpin: %s\n", status_str(st));
@@ -528,55 +834,97 @@ static int c_initpin(ohsm_ctx *c, int ac, char **av)
  * slice (offset 0x10000..), never the bootloader. */
 static int c_fwupdate(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1) { fprintf(stderr, "usage: fwupdate <openhsm_signed.bin>\n"); return 2; }
+    if (ac < 1)
+    {
+        fprintf(stderr, "usage: fwupdate <openhsm_signed.bin>\n");
+        return 2;
+    }
     const uint32_t HDR_OFF = 0x10000u, HDR_SIZE = 0x2000u, MAGIC = 0x4F484253u; /* "OHBS" */
 
     FILE *f = fopen(av[0], "rb");
-    if (!f) { perror(av[0]); return 1; }
-    fseek(f, 0, SEEK_END); long flen = ftell(f); fseek(f, 0, SEEK_SET);
-    if (flen < (long)(HDR_OFF + HDR_SIZE)) { fprintf(stderr, "not a signed image\n"); fclose(f); return 1; }
+    if (!f)
+    {
+        perror(av[0]);
+        return 1;
+    }
+    fseek(f, 0, SEEK_END);
+    long flen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (flen < (long)(HDR_OFF + HDR_SIZE))
+    {
+        fprintf(stderr, "not a signed image\n");
+        fclose(f);
+        return 1;
+    }
     uint8_t *file = malloc((size_t)flen);
-    if (fread(file, 1, (size_t)flen, f) != (size_t)flen) { fclose(f); free(file); return 1; }
+    if (fread(file, 1, (size_t)flen, f) != (size_t)flen)
+    {
+        fclose(f);
+        free(file);
+        return 1;
+    }
     fclose(f);
 
     uint32_t magic, img_len;
     memcpy(&magic, file + HDR_OFF, 4);
     memcpy(&img_len, file + HDR_OFF + 8, 4);
-    if (magic != MAGIC || HDR_OFF + HDR_SIZE + img_len > (uint32_t)flen) {
+    if (magic != MAGIC || HDR_OFF + HDR_SIZE + img_len > (uint32_t)flen)
+    {
         fprintf(stderr, "bad/short signed image (magic=0x%08x img_len=%u)\n", magic, img_len);
-        free(file); return 1;
+        free(file);
+        return 1;
     }
-    uint32_t total = (HDR_SIZE + img_len + 15u) & ~15u;     /* 16-align */
+    uint32_t total = (HDR_SIZE + img_len + 15u) & ~15u; /* 16-align */
     uint8_t *slice = malloc(total);
     memset(slice, 0xFF, total);
     memcpy(slice, file + HDR_OFF, HDR_SIZE + img_len);
     free(file);
 
-    if (login(c)) { free(slice); return 1; }
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    if (login(c))
+    {
+        free(slice);
+        return 1;
+    }
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
 
-    hsm_fwbegin_req_t br = { .total_len = total };
+    hsm_fwbegin_req_t br = {.total_len = total};
     uint16_t st = cmd(c, HSM_CMD_FW_UPDATE_BEGIN, (uint8_t *)&br, sizeof(br), resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "fwupdate begin: %s\n", status_str(st)); free(slice); return 1; }
-    uint16_t maxc; memcpy(&maxc, o, 2);
-    if (maxc == 0 || maxc > 480) maxc = 480;
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "fwupdate begin: %s\n", status_str(st));
+        free(slice);
+        return 1;
+    }
+    uint16_t maxc;
+    memcpy(&maxc, o, 2);
+    if (maxc == 0 || maxc > 480)
+        maxc = 480;
     maxc &= ~15u;
 
     printf("staging %u bytes (img_len=%u) in %u-byte chunks...\n", total, img_len, maxc);
-    for (uint32_t off = 0; off < total; off += maxc) {
+    for (uint32_t off = 0; off < total; off += maxc)
+    {
         uint16_t n = (total - off < maxc) ? (uint16_t)(total - off) : maxc;
         uint8_t req[4 + 480];
         memcpy(req, &off, 4);
         memcpy(req + 4, slice + off, n);
         st = cmd(c, HSM_CMD_FW_UPDATE_DATA, req, (uint16_t)(4 + n), resp, sizeof(resp), &o, &ol);
-        if (st != HSM_OK) { fprintf(stderr, "\nfwupdate data @%u: %s\n", off, status_str(st)); free(slice); return 1; }
-        printf("\r  %u / %u", off + n, total); fflush(stdout);
+        if (st != HSM_OK)
+        {
+            fprintf(stderr, "\nfwupdate data @%u: %s\n", off, status_str(st));
+            free(slice);
+            return 1;
+        }
+        printf("\r  %u / %u", off + n, total);
+        fflush(stdout);
     }
     printf("\n");
     free(slice);
 
     /* APPLY resets the device before replying — the dropped session = success. */
-    hsm_fwapply_req_t ap = { .total_len = total };
+    hsm_fwapply_req_t ap = {.total_len = total};
     int rl = 0;
     ohsm_cmd(c, HSM_CMD_FW_UPDATE_APPLY, (uint8_t *)&ap, sizeof(ap), resp, sizeof(resp), &rl);
     printf("APPLY sent — device verifying & rebooting (blue LED). Re-check with `info`.\n");
@@ -588,11 +936,18 @@ static int c_fwupdate(ohsm_ctx *c, int ac, char **av)
  * every key op then fails until a power cycle re-derives the KEK at boot. */
 static int c_tamper(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    if (login(c)) return 1;
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    (void)ac;
+    (void)av;
+    if (login(c))
+        return 1;
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_TAMPER_TEST, NULL, 0, resp, sizeof(resp), NULL, &ol);
-    if (st != HSM_OK) { fprintf(stderr, "tamper-test: %s\n", status_str(st)); return 1; }
+    if (st != HSM_OK)
+    {
+        fprintf(stderr, "tamper-test: %s\n", status_str(st));
+        return 1;
+    }
     printf("tamper response fired: device wiped session keys + KEK, logged HSM_EV_TAMPER.\n");
     printf("Verify (no power cycle yet):\n");
     printf("  openhsm-cli audit          # newest entry is TAMPER\n");
@@ -609,62 +964,102 @@ static int c_tamper(ohsm_ctx *c, int ac, char **av)
  * or the pre-reboot tail) and cannot be cross-checked, so it resets the anchor. */
 static int c_audit_verify(ohsm_ctx *c, int ac, char **av)
 {
-    (void)ac; (void)av;
-    if (login(c)) return 1;
+    (void)ac;
+    (void)av;
+    if (login(c))
+        return 1;
 
-    uint8_t resp[HSM_MAX_MSG]; const uint8_t *o; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
     uint16_t st = cmd(c, HSM_CMD_GET_AUDIT_KEY, NULL, 0, resp, sizeof(resp), &o, &ol);
-    if (st != HSM_OK || ol < 32) {
-        fprintf(stderr, "audit-verify: get key: %s\n", status_str(st)); return 1;
+    if (st != HSM_OK || ol < 32)
+    {
+        fprintf(stderr, "audit-verify: get key: %s\n", status_str(st));
+        return 1;
     }
-    uint8_t key[32]; memcpy(key, o, 32);
+    uint8_t key[32];
+    memcpy(key, o, 32);
 
-    hsm_auditlog_resp_t ar; hsm_audit_entry_t page[32];
-    if ((st = audit_page(c, 0, &ar, page, resp, sizeof(resp))) != HSM_OK) {
-        fprintf(stderr, "audit-verify: %s\n", status_str(st)); sodium_memzero(key, 32); return 1;
+    hsm_auditlog_resp_t ar;
+    hsm_audit_entry_t page[32];
+    if ((st = audit_page(c, 0, &ar, page, resp, sizeof(resp))) != HSM_OK)
+    {
+        fprintf(stderr, "audit-verify: %s\n", status_str(st));
+        sodium_memzero(key, 32);
+        return 1;
     }
     uint16_t total = ar.total;
     hsm_audit_entry_t *ent = calloc(total ? total : 1, sizeof(hsm_audit_entry_t));
-    if (!ent) { fprintf(stderr, "audit-verify: out of memory\n"); sodium_memzero(key, 32); return 1; }
+    if (!ent)
+    {
+        fprintf(stderr, "audit-verify: out of memory\n");
+        sodium_memzero(key, 32);
+        return 1;
+    }
 
     uint16_t n = 0, offset = 0;
-    while (offset < total) {
-        if ((st = audit_page(c, offset, &ar, page, resp, sizeof(resp))) != HSM_OK) {
+    while (offset < total)
+    {
+        if ((st = audit_page(c, offset, &ar, page, resp, sizeof(resp))) != HSM_OK)
+        {
             fprintf(stderr, "audit-verify: %s\n", status_str(st));
-            free(ent); sodium_memzero(key, 32); return 1;
+            free(ent);
+            sodium_memzero(key, 32);
+            return 1;
         }
-        if (ar.count == 0) break;
-        for (int i = 0; i < ar.count && n < total; i++) ent[n++] = page[i];
+        if (ar.count == 0)
+            break;
+        for (int i = 0; i < ar.count && n < total; i++)
+            ent[n++] = page[i];
         offset = ar.next_offset;
     }
 
     unsigned verified = 0, gaps = 0, broken = 0, tampers = 0;
     uint32_t first_bad = 0;
-    for (uint16_t i = 0; i < n; i++) {
-        if (ent[i].event == HSM_EV_TAMPER) tampers++;
-        if (i == 0) continue;
-        if (ent[i].seq != ent[i - 1].seq + 1) { gaps++; continue; }  /* boundary */
+    for (uint16_t i = 0; i < n; i++)
+    {
+        if (ent[i].event == HSM_EV_TAMPER)
+            tampers++;
+        if (i == 0)
+            continue;
+        if (ent[i].seq != ent[i - 1].seq + 1)
+        {
+            gaps++;
+            continue;
+        } /* boundary */
         uint8_t buf[16], full[crypto_auth_hmacsha256_BYTES];
-        memcpy(buf,      ent[i - 1].mac, 8);
-        memcpy(buf + 8,  &ent[i].seq,   4);
+        memcpy(buf, ent[i - 1].mac, 8);
+        memcpy(buf + 8, &ent[i].seq, 4);
         memcpy(buf + 12, &ent[i].event, 2);
-        memcpy(buf + 14, &ent[i].arg,   2);
+        memcpy(buf + 14, &ent[i].arg, 2);
         crypto_auth_hmacsha256(full, buf, sizeof(buf), key);
-        if (memcmp(full, ent[i].mac, 8) == 0) verified++;
-        else { if (!broken) first_bad = ent[i].seq; broken++; }
+        if (memcmp(full, ent[i].mac, 8) == 0)
+            verified++;
+        else
+        {
+            if (!broken)
+                first_bad = ent[i].seq;
+            broken++;
+        }
     }
     sodium_memzero(key, sizeof(key));
 
     printf("audit-verify: %u entries", n);
-    if (n) printf(" (seq %u..%u)", ent[0].seq, ent[n - 1].seq);
+    if (n)
+        printf(" (seq %u..%u)", ent[0].seq, ent[n - 1].seq);
     printf("\n  links verified: %u   boundaries (gaps): %u   TAMPER events: %u\n",
            verified, gaps, tampers);
     int rc = 0;
-    if (broken) {
+    if (broken)
+    {
         printf("  CHAIN BROKEN: %u contiguous link(s) failed, first at seq=%u "
-               "— the log was altered, reordered or truncated.\n", broken, first_bad);
+               "— the log was altered, reordered or truncated.\n",
+               broken, first_bad);
         rc = 1;
-    } else {
+    }
+    else
+    {
         printf("  chain intact: every contiguous link's HMAC verifies.\n");
     }
     free(ent);
@@ -677,20 +1072,23 @@ static int c_audit_verify(ohsm_ctx *c, int ac, char **av)
  * recovery for a bricked device. Guarded by an explicit `confirm` argument. */
 static int c_factory_reset(ohsm_ctx *c, int ac, char **av)
 {
-    if (ac < 1 || strcmp(av[0], "confirm") != 0) {
+    if (ac < 1 || strcmp(av[0], "confirm") != 0)
+    {
         fprintf(stderr,
-            "factory-reset: DESTRUCTIVE — erases ALL keys, the audit log and the PIN.\n"
-            "Firmware and the anti-rollback counter are kept. To proceed:\n"
-            "  openhsm-cli [--pin PIN] factory-reset confirm\n");
+                "factory-reset: DESTRUCTIVE — erases ALL keys, the audit log and the PIN.\n"
+                "Firmware and the anti-rollback counter are kept. To proceed:\n"
+                "  openhsm-cli [--pin PIN] factory-reset confirm\n");
         return 2;
     }
-    uint8_t resp[HSM_MAX_MSG]; int ol;
+    uint8_t resp[HSM_MAX_MSG];
+    int ol;
     /* Best-effort login: the authenticated path is preferred, but a locked-out
      * device is allowed to reset too, so ignore an AUTH failure here. */
     cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
         resp, sizeof(resp), NULL, &ol);
     uint16_t st = cmd(c, HSM_CMD_FACTORY_RESET, NULL, 0, resp, sizeof(resp), NULL, &ol);
-    if (st != HSM_OK) {
+    if (st != HSM_OK)
+    {
         fprintf(stderr, "factory-reset: %s\n", status_str(st));
         if (st == HSM_ERR_NOT_AUTHORIZED)
             fprintf(stderr, "  need the current PIN (--pin) or a locked-out device\n");
@@ -704,59 +1102,102 @@ static int c_factory_reset(ohsm_ctx *c, int ac, char **av)
 static int usage(void)
 {
     fprintf(stderr,
-      "openhsm-cli [--addr host:port] [--pin PIN] <command> [args]\n"
-      "  ping | info | selftest | storage | random <n> | list | get <id> | pubkey <id>\n"
-      "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
-      "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
-      "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
-      "  audit [n|all] | audit-verify | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
-      "  fwupdate <openhsm_signed.bin> | tamper-test | factory-reset confirm\n"
-      "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
+            "openhsm-cli [--addr host:port] [--pin PIN] <command> [args]\n"
+            "  ping | info | selftest | storage | random <n> | list | get <id> | pubkey <id>\n"
+            "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
+            "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
+            "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
+            "  audit [n|all] | audit-verify | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
+            "  fwupdate <openhsm_signed.bin> | tamper-test | factory-reset confirm\n"
+            "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
 
 int main(int argc, char **argv)
 {
     int i = 1;
-    for (; i < argc; i++) {
-        if (!strcmp(argv[i], "--addr") && i + 1 < argc) { setenv("OPENHSM_ADDR", argv[++i], 1); }
-        else if (!strcmp(argv[i], "--pin") && i + 1 < argc) { g_pin = argv[++i]; }
-        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) return usage();
-        else break;
+    for (; i < argc; i++)
+    {
+        if (!strcmp(argv[i], "--addr") && i + 1 < argc)
+        {
+            setenv("OPENHSM_ADDR", argv[++i], 1);
+        }
+        else if (!strcmp(argv[i], "--pin") && i + 1 < argc)
+        {
+            g_pin = argv[++i];
+        }
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help"))
+            return usage();
+        else
+            break;
     }
-    if (i >= argc) return usage();
+    if (i >= argc)
+        return usage();
     const char *sub = argv[i++];
-    int ac = argc - i; char **av = argv + i;
+    int ac = argc - i;
+    char **av = argv + i;
 
     ohsm_ctx *c = ohsm_open();
-    if (c == NULL) { fprintf(stderr, "cannot open device (USB or daemon)\n"); return 1; }
+    if (c == NULL)
+    {
+        fprintf(stderr, "cannot open device (USB or daemon)\n");
+        return 1;
+    }
 
     int rc;
-    if      (!strcmp(sub, "ping"))     rc = c_ping(c, ac, av);
-    else if (!strcmp(sub, "info"))     rc = c_info(c, ac, av);
-    else if (!strcmp(sub, "selftest")) rc = c_selftest(c, ac, av);
-    else if (!strcmp(sub, "storage"))  rc = c_storage(c, ac, av);
-    else if (!strcmp(sub, "random"))   rc = c_random(c, ac, av);
-    else if (!strcmp(sub, "list"))     rc = c_list(c, ac, av);
-    else if (!strcmp(sub, "get"))      rc = c_get(c, ac, av);
-    else if (!strcmp(sub, "pubkey"))   rc = c_pubkey(c, ac, av);
-    else if (!strcmp(sub, "gen"))      rc = c_gen(c, ac, av);
-    else if (!strcmp(sub, "del"))      rc = c_del(c, ac, av);
-    else if (!strcmp(sub, "sign"))     rc = c_keyop(c, HSM_CMD_SIGN, ac, av, "sign");
-    else if (!strcmp(sub, "hmac"))     rc = c_keyop(c, HSM_CMD_HMAC, ac, av, "hmac");
-    else if (!strcmp(sub, "encrypt"))  rc = c_encrypt(c, ac, av);
-    else if (!strcmp(sub, "decrypt"))  rc = c_decrypt(c, ac, av);
-    else if (!strcmp(sub, "wrap"))     rc = c_wrap(c, ac, av);
-    else if (!strcmp(sub, "unwrap"))   rc = c_unwrap(c, ac, av);
-    else if (!strcmp(sub, "audit"))    rc = c_audit(c, ac, av);
-    else if (!strcmp(sub, "initpin"))  rc = c_initpin(c, ac, av);
-    else if (!strcmp(sub, "setpin"))   rc = c_setpin(c, ac, av);
-    else if (!strcmp(sub, "bench"))    rc = c_bench(c, ac, av);
-    else if (!strcmp(sub, "fwupdate")) rc = c_fwupdate(c, ac, av);
-    else if (!strcmp(sub, "tamper-test")) rc = c_tamper(c, ac, av);
-    else if (!strcmp(sub, "audit-verify")) rc = c_audit_verify(c, ac, av);
-    else if (!strcmp(sub, "factory-reset")) rc = c_factory_reset(c, ac, av);
-    else { ohsm_close(c); return usage(); }
+    if (!strcmp(sub, "ping"))
+        rc = c_ping(c, ac, av);
+    else if (!strcmp(sub, "info"))
+        rc = c_info(c, ac, av);
+    else if (!strcmp(sub, "selftest"))
+        rc = c_selftest(c, ac, av);
+    else if (!strcmp(sub, "storage"))
+        rc = c_storage(c, ac, av);
+    else if (!strcmp(sub, "random"))
+        rc = c_random(c, ac, av);
+    else if (!strcmp(sub, "list"))
+        rc = c_list(c, ac, av);
+    else if (!strcmp(sub, "get"))
+        rc = c_get(c, ac, av);
+    else if (!strcmp(sub, "pubkey"))
+        rc = c_pubkey(c, ac, av);
+    else if (!strcmp(sub, "gen"))
+        rc = c_gen(c, ac, av);
+    else if (!strcmp(sub, "del"))
+        rc = c_del(c, ac, av);
+    else if (!strcmp(sub, "sign"))
+        rc = c_keyop(c, HSM_CMD_SIGN, ac, av, "sign");
+    else if (!strcmp(sub, "hmac"))
+        rc = c_keyop(c, HSM_CMD_HMAC, ac, av, "hmac");
+    else if (!strcmp(sub, "encrypt"))
+        rc = c_encrypt(c, ac, av);
+    else if (!strcmp(sub, "decrypt"))
+        rc = c_decrypt(c, ac, av);
+    else if (!strcmp(sub, "wrap"))
+        rc = c_wrap(c, ac, av);
+    else if (!strcmp(sub, "unwrap"))
+        rc = c_unwrap(c, ac, av);
+    else if (!strcmp(sub, "audit"))
+        rc = c_audit(c, ac, av);
+    else if (!strcmp(sub, "initpin"))
+        rc = c_initpin(c, ac, av);
+    else if (!strcmp(sub, "setpin"))
+        rc = c_setpin(c, ac, av);
+    else if (!strcmp(sub, "bench"))
+        rc = c_bench(c, ac, av);
+    else if (!strcmp(sub, "fwupdate"))
+        rc = c_fwupdate(c, ac, av);
+    else if (!strcmp(sub, "tamper-test"))
+        rc = c_tamper(c, ac, av);
+    else if (!strcmp(sub, "audit-verify"))
+        rc = c_audit_verify(c, ac, av);
+    else if (!strcmp(sub, "factory-reset"))
+        rc = c_factory_reset(c, ac, av);
+    else
+    {
+        ohsm_close(c);
+        return usage();
+    }
 
     ohsm_close(c);
     return rc;
