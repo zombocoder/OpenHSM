@@ -75,6 +75,7 @@ static int audit_recover(uint32_t *out_maxseq)
     for (uint16_t j = 0; j < n; j++) ring[j] = tmp[n - 1 - j];   /* oldest-first */
     ring_count = n;
     ring_head = (uint16_t)(n % AUDIT_RING);
+    return 1;
 }
 
 /* Bring the audit state up from whatever is in the flash pages, then log
