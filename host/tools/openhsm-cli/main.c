@@ -122,8 +122,8 @@ static const char *alg_name(uint16_t a)
 static const char *ev_name(uint16_t e)
 {
     static const char *n[] = {"?","BOOT","AUTH_OK","AUTH_FAIL","KEYGEN","KEYDEL",
-        "SIGN","HMAC","WRAP","UNWRAP","ENCRYPT","DECRYPT","SET_PIN","TAMPER"};
-    return (e <= 13) ? n[e] : "?";
+        "SIGN","HMAC","WRAP","UNWRAP","ENCRYPT","DECRYPT","SET_PIN","TAMPER","FACTORY"};
+    return (e <= 14) ? n[e] : "?";
 }
 
 /* ---- subcommands --------------------------------------------------------- */
@@ -671,6 +671,36 @@ static int c_audit_verify(ohsm_ctx *c, int ac, char **av)
     return rc;
 }
 
+/* Wipe the device to a clean unprovisioned state: erases all keys, the audit
+ * log, and the PIN (firmware + anti-rollback are kept). Requires the current PIN
+ * (--pin) OR a locked-out device (PIN tries exhausted) — the latter is the only
+ * recovery for a bricked device. Guarded by an explicit `confirm` argument. */
+static int c_factory_reset(ohsm_ctx *c, int ac, char **av)
+{
+    if (ac < 1 || strcmp(av[0], "confirm") != 0) {
+        fprintf(stderr,
+            "factory-reset: DESTRUCTIVE — erases ALL keys, the audit log and the PIN.\n"
+            "Firmware and the anti-rollback counter are kept. To proceed:\n"
+            "  openhsm-cli [--pin PIN] factory-reset confirm\n");
+        return 2;
+    }
+    uint8_t resp[HSM_MAX_MSG]; int ol;
+    /* Best-effort login: the authenticated path is preferred, but a locked-out
+     * device is allowed to reset too, so ignore an AUTH failure here. */
+    cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
+        resp, sizeof(resp), NULL, &ol);
+    uint16_t st = cmd(c, HSM_CMD_FACTORY_RESET, NULL, 0, resp, sizeof(resp), NULL, &ol);
+    if (st != HSM_OK) {
+        fprintf(stderr, "factory-reset: %s\n", status_str(st));
+        if (st == HSM_ERR_NOT_AUTHORIZED)
+            fprintf(stderr, "  need the current PIN (--pin) or a locked-out device\n");
+        return 1;
+    }
+    printf("device wiped: keys + audit log cleared, PIN unset (unprovisioned).\n");
+    printf("Re-provision with:  openhsm-cli initpin <new-pin>\n");
+    return 0;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -680,7 +710,7 @@ static int usage(void)
       "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
       "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
       "  audit [n|all] | audit-verify | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
-      "  fwupdate <openhsm_signed.bin> | tamper-test\n"
+      "  fwupdate <openhsm_signed.bin> | tamper-test | factory-reset confirm\n"
       "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
     return 2;
 }
@@ -725,6 +755,7 @@ int main(int argc, char **argv)
     else if (!strcmp(sub, "fwupdate")) rc = c_fwupdate(c, ac, av);
     else if (!strcmp(sub, "tamper-test")) rc = c_tamper(c, ac, av);
     else if (!strcmp(sub, "audit-verify")) rc = c_audit_verify(c, ac, av);
+    else if (!strcmp(sub, "factory-reset")) rc = c_factory_reset(c, ac, av);
     else { ohsm_close(c); return usage(); }
 
     ohsm_close(c);

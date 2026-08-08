@@ -106,6 +106,7 @@ not the USB ISR.
 | 0x0052 | GET_AUDIT_KEY      | yes  | export the 32-byte audit-chain HMAC key (for host-side verify) |
 | 0x0060/61/62 | FW_UPDATE_BEGIN/DATA/APPLY | yes | stage a signed image; bootloader verifies+applies on reset |
 | 0x0070 | TAMPER_TEST        | yes  | diagnostic: fire the tamper response (wipe RAM secrets, drop sessions) |
+| 0x0071 | FACTORY_RESET      | special | wipe keys+audit+PIN to unprovisioned; allowed when authed OR PIN locked-out |
 | 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED | — | reserved (WRAP/UNWRAP used instead) |
 
 ¹ SET_PIN is self-authenticating (verifies the old PIN). "Auth: yes" commands

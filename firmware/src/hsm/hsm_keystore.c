@@ -129,6 +129,21 @@ void HSM_KeyStore_TamperWipe(void)
     tampered = 1;
 }
 
+void HSM_KeyStore_FactoryReset(void)
+{
+    /* Wipe to unprovisioned: clears all key slots, PIN state and audit_seq (the
+     * memset in store_reset), keeping firmware and the anti-rollback counter
+     * (separate flash pages). Caller resets the audit log too. KEK is untouched
+     * (deterministic from HUK+UID); a tamper latch, if set, clears on next boot. */
+    store_reset();
+    persist();
+}
+
+uint8_t HSM_KeyStore_PinIsLocked(void)
+{
+    return (uint8_t)(store.pin_set && store.pin_tries == 0);
+}
+
 void HSM_KeyStore_Init(void)
 {
     tampered = 0;   /* a fresh boot re-derives the KEK below; clear any latch */

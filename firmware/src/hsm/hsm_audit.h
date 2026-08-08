@@ -12,6 +12,13 @@
 /** @brief Initialize the log (reserve a seq block) and record a BOOT event. */
 void HSM_Audit_Init(void);
 
+/**
+ * @brief Factory reset for the log: erase the durable audit pages and start a
+ *        fresh chain whose first entry is FACTORY_RESET. Call after
+ *        HSM_KeyStore_FactoryReset so the seq counter starts clean.
+ */
+void HSM_Audit_Reset(void);
+
 /** @brief Append an event: monotonic seq + chained HMAC over the prior entry. */
 void HSM_Audit_Log(uint16_t event, uint16_t arg);
 

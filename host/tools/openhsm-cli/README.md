@@ -43,6 +43,7 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 | `bench [seconds] [payload]` | throughput benchmark (AES-GCM, HMAC) vs spec §20 targets |
 | `fwupdate <openhsm_signed.bin>` | push a signed firmware image over USB; bootloader verifies + applies on reset (no DFU) |
 | `tamper-test` | fire the tamper response (wipe RAM secrets + drop sessions); verify via `audit`, recover by power-cycle |
+| `factory-reset confirm` | wipe ALL keys + audit log + PIN to unprovisioned (keeps firmware + anti-rollback); needs `--pin` or a locked-out device |
 
 ## Examples
 ```sh

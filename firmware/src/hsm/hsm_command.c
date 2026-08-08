@@ -568,6 +568,20 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_OK, 0);
     }
 
+    case HSM_CMD_FACTORY_RESET: {
+        /* Not gated via command_needs_auth: allowed when authenticated (normal
+         * re-provision) OR when the PIN is locked out (tries exhausted) — the
+         * documented recovery for an otherwise-bricked device. A wipe yields an
+         * empty, unprovisioned device, never the keys, so the locked path is safe. */
+        if (!*auth && !HSM_KeyStore_PinIsLocked()) {
+            return build_response(resp, &hdr, HSM_ERR_NOT_AUTHORIZED, 0);
+        }
+        HSM_KeyStore_FactoryReset();   /* keys + PIN + audit_seq -> unprovisioned */
+        HSM_Audit_Reset();             /* erase audit pages + fresh FACTORY_RESET log */
+        *auth = 0;                     /* device is now unprovisioned */
+        return build_response(resp, &hdr, HSM_OK, 0);
+    }
+
     case HSM_CMD_RANDOM: {
         if (hdr.payload_length < sizeof(hsm_random_req_t)) {
             return build_response(resp, &hdr, HSM_ERR_BAD_LENGTH, 0);

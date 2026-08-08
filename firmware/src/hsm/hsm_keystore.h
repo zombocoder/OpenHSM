@@ -21,6 +21,17 @@ void HSM_KeyStore_Init(void);
 void HSM_KeyStore_TamperWipe(void);
 
 /**
+ * @brief Factory reset: wipe all keys and PIN state to unprovisioned (store_reset
+ *        + persist), leaving firmware and the anti-rollback counter intact. The
+ *        caller must also reset the audit log (HSM_Audit_Reset) for a consistent
+ *        fresh state — both share the persisted seq counter.
+ */
+void HSM_KeyStore_FactoryReset(void);
+
+/** @brief Non-zero iff a PIN is set AND its retry counter is exhausted (locked). */
+uint8_t HSM_KeyStore_PinIsLocked(void);
+
+/**
  * @brief Verify a PIN, managing the persistent retry counter / lockout.
  * @return HSM_OK, HSM_ERR_LOCKED, or HSM_ERR_NOT_AUTHORIZED; *tries_left updated.
  */

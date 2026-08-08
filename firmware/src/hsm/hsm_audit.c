@@ -77,7 +77,10 @@ static int audit_recover(uint32_t *out_maxseq)
     ring_head = (uint16_t)(n % AUDIT_RING);
 }
 
-void HSM_Audit_Init(void)
+/* Bring the audit state up from whatever is in the flash pages, then log
+ * @p first_event as the first entry. Shared by boot (HSM_Audit_Init) and
+ * factory reset (HSM_Audit_Reset, which erases the pages first). */
+static void audit_bringup(uint16_t first_event)
 {
     HSM_KeyStore_AuditKey(audit_key);
     ring_count = 0;
@@ -103,7 +106,23 @@ void HSM_Audit_Init(void)
         block_end = base + need;        /* end of the freshly reserved range */
     }
 
-    HSM_Audit_Log(HSM_EV_BOOT, 0);
+    HSM_Audit_Log(first_event, 0);
+}
+
+void HSM_Audit_Init(void)
+{
+    audit_bringup(HSM_EV_BOOT);
+}
+
+void HSM_Audit_Reset(void)
+{
+    /* Erase the durable audit pages, then bring up a fresh log. Pairs with
+     * HSM_KeyStore_FactoryReset (which zeroed audit_seq), so the new log starts
+     * at seq 0 with FACTORY_RESET as its first, anchoring entry. */
+    for (uint32_t p = 0; p < OPENHSM_AUDIT_PAGES; p++) {
+        HSM_Flash_AuditErasePage(p);
+    }
+    audit_bringup(HSM_EV_FACTORY_RESET);
 }
 
 void HSM_Audit_Log(uint16_t event, uint16_t arg)

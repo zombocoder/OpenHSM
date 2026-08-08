@@ -127,6 +127,13 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ✅ **Store capacity**: `HSM_MAX_OBJECTS=32`, `FIND_OBJECT` paged
   (`offset`/`total`/`next_offset`), `GET_STORAGE` reports fill. The 8 KB page
   physically holds ~50 slots; raising the limit further is a one-line change.
+- ✅ **Factory reset / re-provision**: gated `FACTORY_RESET` (0x0071) wipes all
+  keys + the audit log + PIN to unprovisioned in one consistent step (store_reset
+  + erase audit pages together, so the seq counters never desync), keeping
+  firmware and the anti-rollback counter. Allowed when authenticated OR when the
+  PIN is locked out (tries exhausted) — the only recovery for an otherwise-bricked
+  device; a wipe yields an empty device, never the keys. `openhsm-cli factory-reset
+  confirm`; the fresh log opens with a FACTORY_RESET entry.
 - ⬜ **Multi-page store** to exceed ~50 objects (needs a second flash region).
 - ⬜ **Wear levelling** for the single-page store under heavy key churn.
 - ⬜ **RTC / trusted time** for real audit timestamps (currently seq-ordered only).
