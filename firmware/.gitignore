@@ -1,4 +1,5 @@
 build/
 keys/*.seed
+toolchain/
 tools/sign_image
 tools/gen_vectors

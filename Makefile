@@ -4,6 +4,7 @@
 # builds. Dependencies are git submodules under firmware/vendor/.
 #
 #   make deps       fetch/sync vendored SDK submodules
+#   make toolchain  fetch the pinned Arm GNU cross toolchain into firmware/toolchain/
 #   make toolchain-check  verify arm-none-eabi-gcc is present and new enough
 #   make sign-tool  build the host secure-boot signing tool (firmware/tools/sign_image)
 #   make keygen     mint the vendor signing key + bootloader/vendor_pubkey.h (one-time)
@@ -36,8 +37,42 @@ DEPS_SENTINEL := $(FW_DIR)/vendor/cmsis_core/CMSIS/Core/Include/core_cm33.h
 # Cross toolchain. The firmware targets Arm GNU 15.x; older majors are rejected
 # outright rather than left to fail deep inside the CMake build with an obscure
 # message. A newer major is allowed but flagged, since it is untested here.
-ARM_CC        ?= arm-none-eabi-gcc
 ARM_GCC_MAJOR ?= 15
+
+# Pinned Arm GNU toolchain, fetched on demand by `make toolchain` into a
+# gitignored directory inside the repo. Keeps every machine and CI on the exact
+# same compiler with no sudo and no changes to the system PATH. Arm ships builds
+# only for the hosts mapped below; everything else installs from the OS package
+# manager instead (see README.md → Toolchain).
+ARM_TC_VERSION ?= 15.2.rel1
+ARM_TC_ROOT    ?= $(FW_DIR)/toolchain
+ARM_TC_URLBASE := https://developer.arm.com/-/media/Files/downloads/gnu/$(ARM_TC_VERSION)/binrel
+
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(UNAME_M),arm64)
+    ARM_TC_HOST := darwin-arm64
+  endif
+else ifeq ($(UNAME_S),Linux)
+  ifeq ($(UNAME_M),x86_64)
+    ARM_TC_HOST := x86_64
+  else ifeq ($(UNAME_M),aarch64)
+    ARM_TC_HOST := aarch64
+  endif
+endif
+
+ARM_TC_NAME := arm-gnu-toolchain-$(ARM_TC_VERSION)-$(ARM_TC_HOST)-arm-none-eabi
+ARM_TC_BIN  := $(ARM_TC_ROOT)/$(ARM_TC_NAME)/bin
+
+# A fetched toolchain wins over whatever is in the system PATH, so a machine with
+# a broken or wrong-version arm-none-eabi-gcc installed still builds correctly.
+# Exporting PATH is what makes CMake's find_program() pick it up.
+ifneq ($(wildcard $(ARM_TC_BIN)/arm-none-eabi-gcc),)
+  export PATH := $(abspath $(ARM_TC_BIN)):$(PATH)
+  ARM_CC ?= $(ARM_TC_BIN)/arm-none-eabi-gcc
+endif
+ARM_CC        ?= arm-none-eabi-gcc
 
 # Host secure-boot signing tool. The firmware CMake project cross-compiles with
 # arm-none-eabi, so it cannot build this native binary itself — it just invokes
@@ -55,7 +90,7 @@ SODIUM_LIBS   := $(shell pkg-config --libs libsodium 2>/dev/null || echo -lsodiu
 VENDOR_SEED   := $(FW_DIR)/keys/vendor_ed25519.seed
 VENDOR_PUBKEY := $(FW_DIR)/bootloader/vendor_pubkey.h
 
-.PHONY: all firmware toolchain-check sign-tool keygen host cli ssh-agent flash ping clean distclean deps help
+.PHONY: all firmware toolchain toolchain-check sign-tool keygen host cli ssh-agent flash ping clean distclean deps help
 
 all: firmware host
 
@@ -68,15 +103,49 @@ $(DEPS_SENTINEL):
 	git submodule update --init --recursive
 
 # --- cross toolchain --------------------------------------------------------
+# Fetch and verify the pinned Arm GNU toolchain. Not wired into `firmware` as a
+# dependency — downloading a compiler should be something you ask for, not a
+# surprise mid-build.
+#
+# The download hangs off a real file target, not the phony alias, so make itself
+# skips it once installed. (A `[ -x ... ] && exit 0` guard inside the recipe does
+# NOT work: exit ends that recipe line's shell, and make runs the next line
+# anyway — which re-downloads on every invocation.)
+toolchain: $(ARM_TC_BIN)/arm-none-eabi-gcc
+	@echo "toolchain: Arm GNU $(ARM_TC_VERSION) ready in $(ARM_TC_ROOT)"
+
+$(ARM_TC_BIN)/arm-none-eabi-gcc:
+	@if [ -z "$(ARM_TC_HOST)" ]; then \
+	    echo "toolchain: Arm publishes no $(ARM_TC_VERSION) build for $(UNAME_S)/$(UNAME_M)."; \
+	    echo "           Available: Linux x86_64, Linux aarch64, macOS arm64, Windows."; \
+	    echo "           Install from your OS package manager instead — see README.md (Toolchain)."; \
+	    exit 1; \
+	fi
+	@mkdir -p $(ARM_TC_ROOT)
+	@echo "toolchain: fetching $(ARM_TC_NAME).tar.xz (~1 GB unpacked)"
+	@cd $(ARM_TC_ROOT) && \
+	  curl -fL --retry 3 -o "$(ARM_TC_NAME).tar.xz" "$(ARM_TC_URLBASE)/$(ARM_TC_NAME).tar.xz" && \
+	  curl -fsSL -o "$(ARM_TC_NAME).tar.xz.sha256" "$(ARM_TC_URLBASE)/$(ARM_TC_NAME).tar.xz.sha256asc" && \
+	  if command -v sha256sum >/dev/null 2>&1; then \
+	      sha256sum -c "$(ARM_TC_NAME).tar.xz.sha256"; \
+	  else \
+	      shasum -a 256 -c "$(ARM_TC_NAME).tar.xz.sha256"; \
+	  fi && \
+	  echo "toolchain: checksum verified, extracting..." && \
+	  tar -xf "$(ARM_TC_NAME).tar.xz" && \
+	  rm -f "$(ARM_TC_NAME).tar.xz" "$(ARM_TC_NAME).tar.xz.sha256"
+	@rm -f $(FW_BUILD)/CMakeCache.txt   # stale: cached the previous compiler path
+	@echo "toolchain: installed -> $(ARM_TC_BIN)"
+	@echo "toolchain: 'make firmware' will now use it automatically."
+
 # Gate the firmware build on a present, new-enough arm-none-eabi-gcc. Only the
 # firmware needs it; the host tools build with the native compiler.
 toolchain-check:
 	@command -v $(ARM_CC) >/dev/null 2>&1 || { \
 	    echo "toolchain: '$(ARM_CC)' not found in PATH."; \
-	    echo "           Install Arm GNU Toolchain $(ARM_GCC_MAJOR).x:"; \
-	    echo "             macOS   brew install arm-none-eabi-gcc"; \
-	    echo "             Linux   https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads"; \
-	    echo "           Or point ARM_CC=/path/to/arm-none-eabi-gcc at an existing install."; \
+	    echo "           Run 'make toolchain' to fetch the pinned Arm GNU $(ARM_TC_VERSION),"; \
+	    echo "           install it from your OS package manager (see README.md → Toolchain),"; \
+	    echo "           or point ARM_CC=/path/to/arm-none-eabi-gcc at an existing install."; \
 	    exit 1; }
 	@v=`$(ARM_CC) -dumpversion`; major=$${v%%.*}; \
 	 if [ "$$major" -lt "$(ARM_GCC_MAJOR)" ]; then \
