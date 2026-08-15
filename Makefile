@@ -4,6 +4,7 @@
 # builds. Dependencies are git submodules under firmware/vendor/.
 #
 #   make deps       fetch/sync vendored SDK submodules
+#   make toolchain-check  verify arm-none-eabi-gcc is present and new enough
 #   make sign-tool  build the host secure-boot signing tool (firmware/tools/sign_image)
 #   make keygen     mint the vendor signing key + bootloader/vendor_pubkey.h (one-time)
 #   make firmware   build the STM32U585 firmware (-> build/openhsm.{elf,bin,hex})
@@ -32,6 +33,12 @@ AGENT_BUILD := $(AGENT_DIR)/build
 # A sentinel file that exists only once submodules are checked out.
 DEPS_SENTINEL := $(FW_DIR)/vendor/cmsis_core/CMSIS/Core/Include/core_cm33.h
 
+# Cross toolchain. The firmware targets Arm GNU 15.x; older majors are rejected
+# outright rather than left to fail deep inside the CMake build with an obscure
+# message. A newer major is allowed but flagged, since it is untested here.
+ARM_CC        ?= arm-none-eabi-gcc
+ARM_GCC_MAJOR ?= 15
+
 # Host secure-boot signing tool. The firmware CMake project cross-compiles with
 # arm-none-eabi, so it cannot build this native binary itself — it just invokes
 # it from the `signed`/`keygen` targets. Build it here with the host compiler.
@@ -48,7 +55,7 @@ SODIUM_LIBS   := $(shell pkg-config --libs libsodium 2>/dev/null || echo -lsodiu
 VENDOR_SEED   := $(FW_DIR)/keys/vendor_ed25519.seed
 VENDOR_PUBKEY := $(FW_DIR)/bootloader/vendor_pubkey.h
 
-.PHONY: all firmware sign-tool keygen host cli ssh-agent flash ping clean distclean deps help
+.PHONY: all firmware toolchain-check sign-tool keygen host cli ssh-agent flash ping clean distclean deps help
 
 all: firmware host
 
@@ -59,6 +66,28 @@ deps:
 $(DEPS_SENTINEL):
 	@echo "Vendored SDK missing; fetching submodules..."
 	git submodule update --init --recursive
+
+# --- cross toolchain --------------------------------------------------------
+# Gate the firmware build on a present, new-enough arm-none-eabi-gcc. Only the
+# firmware needs it; the host tools build with the native compiler.
+toolchain-check:
+	@command -v $(ARM_CC) >/dev/null 2>&1 || { \
+	    echo "toolchain: '$(ARM_CC)' not found in PATH."; \
+	    echo "           Install Arm GNU Toolchain $(ARM_GCC_MAJOR).x:"; \
+	    echo "             macOS   brew install arm-none-eabi-gcc"; \
+	    echo "             Linux   https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads"; \
+	    echo "           Or point ARM_CC=/path/to/arm-none-eabi-gcc at an existing install."; \
+	    exit 1; }
+	@v=`$(ARM_CC) -dumpversion`; major=$${v%%.*}; \
+	 if [ "$$major" -lt "$(ARM_GCC_MAJOR)" ]; then \
+	    echo "toolchain: $(ARM_CC) is $$v, but Arm GNU $(ARM_GCC_MAJOR).x or newer is required."; \
+	    echo "           Override with ARM_GCC_MAJOR=$$major to build anyway."; \
+	    exit 1; \
+	 elif [ "$$major" -gt "$(ARM_GCC_MAJOR)" ]; then \
+	    echo "toolchain: $(ARM_CC) $$v (newer than the tested $(ARM_GCC_MAJOR).x — proceeding)"; \
+	 else \
+	    echo "toolchain: $(ARM_CC) $$v"; \
+	 fi
 
 # --- host signing tool ------------------------------------------------------
 # Must exist before the firmware build: CMake's `signed` target shells out to it
@@ -88,7 +117,7 @@ keygen: $(SIGN_TOOL)
 	$(SIGN_TOOL) keygen $(VENDOR_SEED) $(VENDOR_PUBKEY)
 
 # --- firmware ---------------------------------------------------------------
-firmware: $(DEPS_SENTINEL) $(SIGN_TOOL)
+firmware: toolchain-check $(DEPS_SENTINEL) $(SIGN_TOOL)
 	cmake -S $(FW_DIR) -B $(FW_BUILD) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 	cmake --build $(FW_BUILD) -j
 
