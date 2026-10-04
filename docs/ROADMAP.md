@@ -86,8 +86,12 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   encrypted ACK is built), so the audit-log flash write never runs in interrupt
   context and the ACK still reaches the host. Verified on hardware via `tamper-test`:
   audit shows TAMPER, subsequent key ops fail (not authorized), power-cycle restores.
-- ⬜ Real analog **PVD/BOR threshold** trip needs a variable bench supply to dip VDD;
-  the response path is proven via `tamper-test` (shared code), the PVD wiring is in.
+- 🟡 Real analog **PVD/BOR threshold** trip: observed on hardware (2026-10-04) —
+  yanking USB power logged a durable `TAMPER arg=2` (PVD) before VDD collapsed, so
+  the detector fires and the audit write completes on the falling rail. Not yet
+  characterised at the exact threshold (needs a variable bench supply). Side
+  effect: **every unplug logs a TAMPER event**, diluting real tamper signals —
+  consider a distinct power-loss event, or logging PVD only if the device stays up.
 - ⬜ **Debug-lock detection** (refuse / zeroize when a debugger is attached) — best
   tested with the incoming SWD programmer (attach → expect tamper); not yet wired.
 - ⬜ Backup-domain TAMP pins / persistent secure-storage wipe → ties into RDP-2 (D).
@@ -133,7 +137,11 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   firmware and the anti-rollback counter. Allowed when authenticated OR when the
   PIN is locked out (tries exhausted) — the only recovery for an otherwise-bricked
   device; a wipe yields an empty device, never the keys. `openhsm-cli factory-reset
-  confirm`; the fresh log opens with a FACTORY_RESET entry.
+  confirm`; the fresh log opens with a FACTORY_RESET entry. Verified on hardware
+  (2026-10-04): authed reset, wrong-PIN refusal on a healthy device, lockout-path
+  reset, and the wiped state + fresh audit chain survive a power cycle. Note:
+  `openhsm-cli` defaults `--pin` to `123456`, so omitting it still authenticates
+  on a device left at the test PIN.
 - ⬜ **Multi-page store** to exceed ~50 objects (needs a second flash region).
 - ⬜ **Wear levelling** for the single-page store under heavy key churn.
 - ⬜ **RTC / trusted time** for real audit timestamps (currently seq-ordered only).
@@ -173,8 +181,11 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   the device is single-shot, so parts accumulate host-side and one command is
   issued at `*Final` (verified multi-part == single-shot). `C_WrapKey`/`C_UnwrapKey`
   map to device WRAP/UNWRAP.
-- ⬜ Fuller `C_GetAttributeValue` (e.g. `CKA_EC_POINT` for public keys); true
-  streaming multi-part beyond one device message; `C_DeriveKey` (X25519 ECDH).
+- ⬜ Fuller `C_GetAttributeValue`: P-256 `CKA_EC_PARAMS`/`CKA_EC_POINT` are done,
+  but Ed25519/X25519 keys (`CKK_EC_EDWARDS`/`CKK_EC_MONTGOMERY`) don't expose
+  them yet, and there are no separate `CKO_PUBLIC_KEY` objects (the keypair's
+  public handle == private handle). Also: true streaming multi-part beyond one
+  device message; `C_DeriveKey` (X25519 ECDH).
 
 ### H. Reliability & quality
 - ⬜ **Watchdog** (IWDG) + safe recovery; brownout reset handling.

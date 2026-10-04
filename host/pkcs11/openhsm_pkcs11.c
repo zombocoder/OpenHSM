@@ -1133,8 +1133,8 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech,
                           resp, sizeof(resp), &out, &olen);
     if (rv != CKR_OK) return rv;
     hsm_obj_info_t o; memcpy(&o, out, sizeof(o));
-    /* One device object models the keypair; both handles map to it. The public
-     * key bytes are retrievable via CKA_EC_POINT / GET_PUBLIC (future). */
+    /* One device object models the keypair; both handles map to it. For P-256
+     * the public point is served via CKA_EC_POINT (device GET_PUBLIC). */
     *phPriv = (CK_OBJECT_HANDLE)o.id;
     *phPub  = (CK_OBJECT_HANDLE)o.id;
     return CKR_OK;
