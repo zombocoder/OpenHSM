@@ -132,3 +132,10 @@ Verify what will actually be used with `make toolchain-check`.
   TrustZone. No plaintext key material is ever stored in flash or exported.
 - Development VID/PID `0483:5750` (ST's VID + a custom PID). Allocate your own
   before production.
+
+## License
+
+OpenHSM is licensed under the [Apache License 2.0](LICENSE). Third-party
+components (STM32 CMSIS/HAL, the ST USB device middleware, Monocypher, the
+p11-kit `pkcs11.h`) keep their own licenses — see [NOTICE](NOTICE). Note that
+the ST USB middleware (SLA0044) restricts its use to STMicroelectronics devices.

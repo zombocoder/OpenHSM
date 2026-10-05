@@ -1,0 +1,27 @@
+OpenHSM
+Copyright 2026 zombocoder
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It builds on third-party components that keep their own licenses:
+
+Fetched as git submodules (firmware/vendor/, not part of this tree):
+  - CMSIS Core (Arm / STMicroelectronics) ............ Apache-2.0
+  - CMSIS Device STM32U5 (STMicroelectronics) ........ Apache-2.0
+  - STM32U5 HAL driver (STMicroelectronics) .......... BSD-3-Clause
+  - STM32 USB Device middleware (STMicroelectronics) . SLA0044 "Ultimate
+    Liberty" license — proprietary; use is restricted to STMicroelectronics
+    devices. Firmware images that link it may only run on ST microcontrollers.
+  - Monocypher (Loup Vaillant et al.) ................ BSD-2-Clause OR CC0-1.0
+
+Included in this repository, under their original headers:
+  - firmware/startup/startup_stm32u585xx.s,
+    firmware/src/system_stm32u5xx.c (STMicroelectronics) ... Apache-2.0
+  - firmware/linker/STM32U585xx_*.ld (STMicroelectronics) .. BSD-3-Clause
+  - host/pkcs11/pkcs11.h (p11-kit: g10 Code GmbH,
+    Andreas Jellinghaus, Red Hat, Inc.) ..................... permissive
+    (unlimited permission to copy and/or distribute, with or without
+    modifications, as long as its notice is preserved)
+
+Linked at build/run time on the host (not distributed here):
+  - libusb-1.0 (LGPL-2.1+), libsodium (ISC)
