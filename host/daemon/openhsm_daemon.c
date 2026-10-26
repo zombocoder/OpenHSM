@@ -12,7 +12,11 @@
  * of one HSM packet. The daemon writes a request to EP1 OUT and reads the
  * response from EP1 IN (re-assembled by header payload_length / short packet).
  *
- * One client at a time (the USB device is a single shared resource).
+ * Several clients at once: each request/response frame is exchanged with the
+ * device atomically, and the device keeps their sessions apart. A client that
+ * stalls mid-frame is dropped after IO_TIMEOUT_S. If the device disappears
+ * (unplug, re-enumeration), the client whose exchange failed is dropped and the
+ * device is reopened on the next request.
  *
  *   usage: openhsm-daemon [bind_addr] [port]   (default 0.0.0.0 11700)
  */
@@ -26,6 +30,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <sys/time.h>
 #include <libusb.h>
 
 #define OPENHSM_VID 0x0483
@@ -33,6 +39,8 @@
 #define EP_OUT 0x01
 #define EP_IN 0x81
 #define USB_TIMEOUT 3000
+#define MAX_CLIENTS 8
+#define IO_TIMEOUT_S 5
 
 static libusb_context *g_usb;
 static libusb_device_handle *g_dev;
@@ -143,33 +151,30 @@ static int write_n(int fd, const uint8_t *buf, int n)
     return 0;
 }
 
-/* Serve one client: [len][pkt] in -> USB -> [len][resp] out, until EOF. */
-static void serve(int fd)
+/* Serve one frame: [len][pkt] in -> USB -> [len][resp] out.
+ * Returns 0, -1 to drop the client, or -2 when the USB exchange failed. */
+static int serve_one(int fd)
 {
-    uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
-    for (;;)
-    {
-        uint8_t lenbe[4];
-        if (read_n(fd, lenbe, 4) != 0)
-            return;
-        uint32_t len = ((uint32_t)lenbe[0] << 24) | ((uint32_t)lenbe[1] << 16) |
-                       ((uint32_t)lenbe[2] << 8) | lenbe[3];
-        if (len == 0 || len > sizeof(req))
-            return;
-        if (read_n(fd, req, (int)len) != 0)
-            return;
+    static uint8_t req[HSM_MAX_MSG], resp[HSM_MAX_MSG];
+    uint8_t lenbe[4];
+    if (read_n(fd, lenbe, 4) != 0)
+        return -1;
+    uint32_t len = ((uint32_t)lenbe[0] << 24) | ((uint32_t)lenbe[1] << 16) |
+                   ((uint32_t)lenbe[2] << 8) | lenbe[3];
+    if (len == 0 || len > sizeof(req))
+        return -1;
+    if (read_n(fd, req, (int)len) != 0)
+        return -1;
 
-        int rlen = usb_exchange(req, (int)len, resp, sizeof(resp));
-        if (rlen < 0)
-            return;
+    int rlen = usb_exchange(req, (int)len, resp, sizeof(resp));
+    if (rlen < 0)
+        return -2;
 
-        uint8_t rbe[4] = {(uint8_t)(rlen >> 24), (uint8_t)(rlen >> 16),
-                          (uint8_t)(rlen >> 8), (uint8_t)rlen};
-        if (write_n(fd, rbe, 4) != 0)
-            return;
-        if (write_n(fd, resp, rlen) != 0)
-            return;
-    }
+    uint8_t rbe[4] = {(uint8_t)(rlen >> 24), (uint8_t)(rlen >> 16),
+                      (uint8_t)(rlen >> 8), (uint8_t)rlen};
+    if (write_n(fd, rbe, 4) != 0 || write_n(fd, resp, rlen) != 0)
+        return -1;
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -202,21 +207,63 @@ int main(int argc, char **argv)
            OPENHSM_VID, OPENHSM_PID, bind_addr, port);
     fflush(stdout);
 
-    /* TCP carries only ciphertext; disable Nagle for latency. */
+    /* pfd[0] is the listener, pfd[1..n-1] the clients. */
+    struct pollfd pfd[1 + MAX_CLIENTS];
+    int n = 1;
+    pfd[0].fd = srv;
+    pfd[0].events = POLLIN;
     for (;;)
     {
-        struct sockaddr_in ca;
-        socklen_t cl = sizeof(ca);
-        int fd = accept(srv, (struct sockaddr *)&ca, &cl);
-        if (fd < 0)
+        if (poll(pfd, n, -1) < 0)
             continue;
-        int one = 1;
-        setsockopt(fd, IPPROTO_TCP, 1 /*TCP_NODELAY*/, &one, sizeof(one));
-        printf("openhsm-daemon: client %s connected\n", inet_ntoa(ca.sin_addr));
-        fflush(stdout);
-        serve(fd);
-        close(fd);
-        printf("openhsm-daemon: client disconnected\n");
-        fflush(stdout);
+        if (pfd[0].revents & POLLIN)
+        {
+            struct sockaddr_in ca;
+            socklen_t cl = sizeof(ca);
+            int fd = accept(srv, (struct sockaddr *)&ca, &cl);
+            if (fd >= 0 && n == 1 + MAX_CLIENTS)
+            {
+                close(fd);
+                fd = -1;
+            }
+            if (fd >= 0)
+            {
+                /* TCP carries only ciphertext; disable Nagle for latency. A
+                 * stalled client must not hold the device for everyone else.
+                 * shortcut: it can still delay others by up to IO_TIMEOUT_S per
+                 * frame; per-client buffering would remove that if it matters. */
+                int one = 1;
+                struct timeval tv = {IO_TIMEOUT_S, 0};
+                setsockopt(fd, IPPROTO_TCP, 1 /*TCP_NODELAY*/, &one, sizeof(one));
+                setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+                pfd[n].fd = fd;
+                pfd[n].events = POLLIN;
+                pfd[n].revents = 0;
+                n++;
+                printf("openhsm-daemon: client %s connected (%d)\n", inet_ntoa(ca.sin_addr), n - 1);
+                fflush(stdout);
+            }
+        }
+        for (int i = n - 1; i >= 1; i--)
+        {
+            if (!(pfd[i].revents & (POLLIN | POLLHUP | POLLERR)))
+                continue;
+            int rc = (g_dev || usb_open() == 0) ? serve_one(pfd[i].fd) : -2;
+            if (rc == -2)
+            {
+                /* Unplugged or re-enumerated: the handle is dead and the device
+                 * lost every session. Drop it, reopen on the next request. */
+                usb_close();
+                fprintf(stderr, "openhsm-daemon: USB exchange failed; will reopen the device\n");
+            }
+            if (rc != 0)
+            {
+                close(pfd[i].fd);
+                pfd[i] = pfd[--n];
+                printf("openhsm-daemon: client disconnected (%d)\n", n - 1);
+                fflush(stdout);
+            }
+        }
     }
 }

@@ -200,9 +200,10 @@ DFU-flashable dev board (do last, or on a sacrificial board).
 - ⬜ Constant-time review of comparisons / no secret-dependent branches.
 
 ### I. Deployment (§21, §23)
-- 🟡 **openhsm-daemon**: USB↔TCP bridge done (one client at a time, no TLS to the
-  daemon). For prod: multi-client/session multiplexing, TLS or mTLS on the daemon
-  socket, reconnect, metrics, systemd unit.
+- 🟡 **openhsm-daemon**: USB↔TCP bridge with up to 8 concurrent clients (frames
+  are exchanged atomically; a client stalled mid-frame is dropped after 5 s) and
+  USB reopen after unplug/re-enumeration. Remaining for prod: TLS or mTLS on the
+  daemon socket, metrics, systemd unit.
 - ⬜ **Docker/Kubernetes**: image builds; finish the module `.so` build stage;
   Helm chart / DaemonSet for the HSM node + device plugin; example pod.
 - ⬜ FreeBSD host validation (primary target OS per spec §4).
