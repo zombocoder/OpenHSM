@@ -2,8 +2,8 @@
  * @file    openhsm_transport.h
  * @brief   USB transport for the OpenHSM host stack (libusb).
  *
- * Phase A: plaintext command exchange (multi-packet framed). The encrypted
- * session (X25519/AES-GCM) layers on top of this later for command privacy.
+ * Every command travels inside the encrypted session (X25519/AES-GCM) that
+ * ohsm_open establishes; there is no plaintext mode.
  */
 #ifndef OPENHSM_TRANSPORT_H
 #define OPENHSM_TRANSPORT_H
@@ -13,14 +13,15 @@
 
 typedef struct ohsm_ctx ohsm_ctx;
 
-/** @brief Open the first OpenHSM device. Returns NULL on failure. */
+/** @brief Open the first OpenHSM device (or OPENHSM_ADDR) and establish the
+ *         secure session. Returns NULL on failure, including a failed handshake. */
 ohsm_ctx *ohsm_open(void);
 
 /** @brief Close and free the context. */
 void ohsm_close(ohsm_ctx *c);
 
 /**
- * @brief Send a plaintext command and read the response.
+ * @brief Send a command over the secure session and read the decrypted response.
  * @param command  hsm_command_t
  * @param payload  request payload (may be NULL)
  * @param plen     payload length

@@ -5,7 +5,8 @@
  * On open it performs the X25519 ECDH handshake and derives directional
  * AES-256-GCM keys; every ohsm_cmd after that is wrapped in an encrypted
  * HSM_CMD_SESSION_DATA envelope (AAD = outer header, per-message nonce with an
- * increasing counter). Falls back to plaintext only if the handshake fails.
+ * increasing counter). There is no plaintext fallback: if the handshake fails,
+ * ohsm_open fails.
  */
 #include "openhsm_transport.h"
 #include "hsm_proto.h"
@@ -243,13 +244,15 @@ ohsm_ctx *ohsm_open(void)
         }
         c->claimed = 1;
     }
-    establish_session(c);  /* best-effort; plaintext fallback if it fails */
-    if (getenv("OPENHSM_DEBUG")) {
-        if (c->session_ok)
-            fprintf(stderr, "openhsm: secure session established (id=0x%08x)\n", c->session_id);
-        else
-            fprintf(stderr, "openhsm: WARNING running PLAINTEXT (handshake failed)\n");
+    /* Fail closed: a plaintext fallback would send the PIN in the clear, and
+     * anyone on the path can force one by breaking the handshake. */
+    if (establish_session(c) != 0) {
+        fprintf(stderr, "openhsm: secure session handshake failed\n");
+        ohsm_close(c);
+        return NULL;
     }
+    if (getenv("OPENHSM_DEBUG"))
+        fprintf(stderr, "openhsm: secure session established (id=0x%08x)\n", c->session_id);
     return c;
 }
 
@@ -280,9 +283,6 @@ int ohsm_cmd(ohsm_ctx *c, uint16_t command,
              uint8_t *resp, int resp_cap, int *resp_len)
 {
     if (c == NULL) return -1;
-    if (!c->session_ok) {
-        return cmd_plain(c, command, payload, plen, resp, resp_cap, resp_len);
-    }
 
     /* Build the inner plaintext packet. */
     uint8_t inner[HSM_MAX_MSG];
