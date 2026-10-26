@@ -25,11 +25,6 @@
 #define FW_VERSION_MAJOR 0u
 #define FW_VERSION_MINOR 1u
 
-/* Login state for the PLAINTEXT path only (no secure session to bind to).
- * Encrypted-session logins are bound to the session (see session_t.authenticated),
- * so a login on one session never unlocks another. */
-static int g_plaintext_auth = 0;
-
 /* Commands that operate on or create key material require login. */
 static int command_needs_auth(uint16_t cmd)
 {
@@ -52,6 +47,22 @@ static int command_needs_auth(uint16_t cmd)
         /* GET_PUBLIC is open: a public key is not secret, and standard PKCS#11
          * clients (OpenSSH `ssh -I`) read CKA_EC_POINT before logging in. */
         return 0;   /* PING/INFO/SELFTEST/RANDOM/FIND/GET/GET_PUBLIC/AUTH/session: open */
+    }
+}
+
+/* The PIN and anything gated behind it never cross the wire in the clear: over
+ * openhsm-daemon the plaintext path is reachable by anyone on the network, and
+ * a plaintext login could not be bound to a client. */
+static int command_needs_session(uint16_t cmd)
+{
+    switch (cmd) {
+    case HSM_CMD_AUTH:
+    case HSM_CMD_INIT_PIN:
+    case HSM_CMD_SET_PIN:
+    case HSM_CMD_FACTORY_RESET:
+        return 1;
+    default:
+        return command_needs_auth(cmd);
     }
 }
 
@@ -105,8 +116,13 @@ size_t HSM_ProcessPacket(const uint8_t *req, size_t req_len,
         return HSM_Session_Open(req, req_len, resp, resp_cap);
     case HSM_CMD_CLOSE_SESSION:
         return HSM_Session_Close(req, req_len, resp, resp_cap);
-    default:
-        return HSM_ProcessPlaintext(req, req_len, resp, resp_cap, &g_plaintext_auth);
+    default: {
+        if (command_needs_session(hdr.command)) {
+            return HSM_BuildResponse(resp, req, HSM_ERR_NO_SESSION, 0);
+        }
+        int logged_out = 0;
+        return HSM_ProcessPlaintext(req, req_len, resp, resp_cap, &logged_out);
+    }
     }
 }
 

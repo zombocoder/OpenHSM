@@ -85,10 +85,10 @@ not the USB ISR.
 | 0x0004        | ECHO                       |   no    | returns payload (test)                                                      |
 | 0x0010        | OPEN_SESSION               |   no    | X25519 handshake → session keys                                             |
 | 0x0011        | CLOSE_SESSION              |   no    | zeroizes session keys                                                       |
-| 0x0012        | AUTH                       |   no    | PIN login (retry counter / lockout)                                         |
+| 0x0012        | AUTH                       | session | PIN login (retry counter / lockout)                                         |
 | 0x0013        | SESSION_DATA               |   no    | outer cmd for an encrypted envelope                                         |
-| 0x0014        | SET_PIN                    |   no¹   | change PIN (old verified inside)                                            |
-| 0x0015        | INIT_PIN                   |   no    | set first PIN on an unprovisioned device                                    |
+| 0x0014        | SET_PIN                    | session¹| change PIN (old verified inside)                                            |
+| 0x0015        | INIT_PIN                   | session | set first PIN on an unprovisioned device                                    |
 | 0x0020        | GENERATE_KEY               |   yes   | random key → encrypted object                                               |
 | 0x0023        | FIND_OBJECT                |   no    | list object metadata (optional label)                                       |
 | 0x0024        | DELETE_OBJECT              |   yes   | zeroize slot                                                                |
@@ -110,7 +110,10 @@ not the USB ISR.
 | 0x0021/0x0022 | IMPORT/EXPORT_WRAPPED      |    —    | reserved (WRAP/UNWRAP used instead)                                         |
 
 ¹ SET_PIN is self-authenticating (verifies the old PIN). "Auth: yes" commands
-require a prior successful AUTH (login state is global per power cycle).
+require a prior successful AUTH in the same secure session. "session" commands
+carry the PIN and are refused outside a session. Sent as plaintext, all of these
+(and FACTORY_RESET) get `NO_SESSION`, so the PIN never crosses the wire in the
+clear and a plaintext client can never be logged in.
 
 ### Status codes
 

@@ -63,24 +63,6 @@ static int bulk_xfer(libusb_device_handle *h, const uint8_t *out, int out_len,
     return 0;
 }
 
-/* Build a plaintext packet (header + payload) and exchange it. */
-static int send_command(libusb_device_handle *h, uint16_t command,
-                         const uint8_t *payload, uint16_t payload_len,
-                         uint8_t *resp, int resp_cap, int *resp_len)
-{
-    uint8_t pkt[HSM_MAX_MSG];
-    memset(pkt, 0, HSM_HEADER_SIZE);
-    hsm_header_t hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.command        = command;
-    hdr.payload_length = payload_len;
-    memcpy(pkt, &hdr, sizeof(hdr));
-    if (payload_len > 0 && payload != NULL) {
-        memcpy(pkt + HSM_HEADER_SIZE, payload, payload_len);
-    }
-    return bulk_xfer(h, pkt, HSM_HEADER_SIZE + payload_len, resp, resp_cap, resp_len);
-}
-
 static void make_nonce(uint8_t n[12], uint8_t dir, uint32_t sid, uint32_t ctr)
 {
     n[0] = dir; n[1] = 0; n[2] = 0; n[3] = 0;
@@ -90,7 +72,77 @@ static void make_nonce(uint8_t n[12], uint8_t dir, uint32_t sid, uint32_t ctr)
     n[10] = (uint8_t)(ctr >> 16); n[11] = (uint8_t)(ctr >> 24);
 }
 
-/* Full secure-session demo: ECDH handshake, then an encrypted RANDOM(32). */
+/* Secure session opened by do_session(); send_command() uses it once open. */
+static struct {
+    int      open;
+    uint32_t sid, ctr;
+    uint8_t  k_c2d[32], k_d2c[32];
+} g_sess;
+
+/* Build a packet (header + payload) and exchange it: plaintext until
+ * do_session() opens the secure session, an encrypted envelope after that.
+ * Either way resp receives the plaintext response packet. */
+static int send_command(libusb_device_handle *h, uint16_t command,
+                         const uint8_t *payload, uint16_t payload_len,
+                         uint8_t *resp, int resp_cap, int *resp_len)
+{
+    uint8_t pkt[HSM_MAX_MSG];
+    if (HSM_HEADER_SIZE + payload_len + 16 > sizeof(pkt)) return -1;
+    memset(pkt, 0, HSM_HEADER_SIZE);
+    hsm_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.command        = command;
+    hdr.payload_length = payload_len;
+    memcpy(pkt, &hdr, sizeof(hdr));
+    if (payload_len > 0 && payload != NULL) {
+        memcpy(pkt + HSM_HEADER_SIZE, payload, payload_len);
+    }
+    int len = HSM_HEADER_SIZE + payload_len;
+    if (!g_sess.open) {
+        return bulk_xfer(h, pkt, len, resp, resp_cap, resp_len);
+    }
+
+    /* Envelope: outer header (the AAD), GCM(inner packet), tag. */
+    uint8_t env[HSM_MAX_MSG];
+    hsm_header_t oh; memset(&oh, 0, sizeof(oh));
+    oh.command = HSM_CMD_SESSION_DATA;
+    oh.flags = HSM_FLAG_ENCRYPTED;
+    oh.session_id = g_sess.sid;
+    oh.counter = g_sess.ctr;
+    oh.payload_length = (uint16_t)(len + 16);
+    memcpy(env, &oh, HSM_HEADER_SIZE);
+    uint8_t nonce[12];
+    make_nonce(nonce, HSM_NONCE_DIR_C2D, g_sess.sid, g_sess.ctr++);
+    crypto_aead_aes256gcm_encrypt_detached(env + HSM_HEADER_SIZE, env + HSM_HEADER_SIZE + len,
+        NULL, pkt, len, env, HSM_HEADER_SIZE, NULL, nonce, g_sess.k_c2d);
+
+    uint8_t raw[HSM_MAX_MSG];
+    int rl = 0;
+    int rc = bulk_xfer(h, env, HSM_HEADER_SIZE + len + 16, raw, sizeof(raw), &rl);
+    if (rc != 0) return rc;
+    hsm_header_t rh; memcpy(&rh, raw, sizeof(rh));
+    if (!(rh.flags & HSM_FLAG_ENCRYPTED)) {   /* unencrypted error reply, e.g. NO_SESSION */
+        if (rl > resp_cap) rl = resp_cap;
+        memcpy(resp, raw, rl);
+        *resp_len = rl;
+        return 0;
+    }
+    int ct_len = (int)rh.payload_length - 16;
+    if (ct_len < (int)HSM_HEADER_SIZE || ct_len > resp_cap ||
+        (int)HSM_HEADER_SIZE + ct_len + 16 > rl) return -1;
+    make_nonce(nonce, HSM_NONCE_DIR_D2C, g_sess.sid, rh.counter);
+    if (crypto_aead_aes256gcm_decrypt_detached(resp, NULL, raw + HSM_HEADER_SIZE, ct_len,
+            raw + HSM_HEADER_SIZE + ct_len, raw, HSM_HEADER_SIZE, nonce, g_sess.k_d2c) != 0) {
+        fprintf(stderr, "SESS  -> response authentication FAILED\n");
+        return -1;
+    }
+    *resp_len = ct_len;
+    return 0;
+}
+
+/* Secure session: ECDH handshake, then an encrypted RANDOM(32). Every command
+ * after this goes through the session (the device refuses AUTH and gated
+ * commands in plaintext). */
 static void do_session(libusb_device_handle *h)
 {
     static const char INFO[] = "OpenHSM/v1 session keys";
@@ -130,56 +182,20 @@ static void do_session(libusb_device_handle *h)
     memcpy(salt + 32, dev_nonce, 32);
     crypto_kdf_hkdf_sha256_extract(prk, salt, sizeof(salt), shared, sizeof(shared));
     crypto_kdf_hkdf_sha256_expand(okm, sizeof(okm), INFO, sizeof(INFO) - 1, prk);
-    const uint8_t *k_c2d = okm, *k_d2c = okm + 32;
+    memcpy(g_sess.k_c2d, okm, 32);
+    memcpy(g_sess.k_d2c, okm + 32, 32);
+    sodium_memzero(okm, sizeof(okm));
+    g_sess.sid = sid;
+    g_sess.ctr = 1;
+    g_sess.open = 1;
 
-    /* 4. Encrypted RANDOM(32): inner packet -> GCM -> envelope. */
-    uint8_t inner[HSM_HEADER_SIZE + 2];
-    memset(inner, 0, sizeof(inner));
-    { hsm_header_t ih; memset(&ih, 0, sizeof(ih));
-      ih.command = HSM_CMD_RANDOM; ih.payload_length = 2;
-      memcpy(inner, &ih, sizeof(ih)); inner[HSM_HEADER_SIZE] = 32; }
-
-    uint32_t counter = 1;
-    uint8_t pkt[HSM_MAX_MSG];
-    hsm_header_t oh; memset(&oh, 0, sizeof(oh));
-    oh.command = HSM_CMD_SESSION_DATA;
-    oh.flags = HSM_FLAG_ENCRYPTED;
-    oh.session_id = sid;
-    oh.counter = counter;
-    oh.payload_length = (uint16_t)(sizeof(inner) + 16);
-    memcpy(pkt, &oh, HSM_HEADER_SIZE);
-
-    uint8_t nonce[12];
-    make_nonce(nonce, HSM_NONCE_DIR_C2D, sid, counter);
-    uint8_t tag[16]; unsigned long long taglen = 0;
-    crypto_aead_aes256gcm_encrypt_detached(
-        pkt + HSM_HEADER_SIZE, tag, &taglen,
-        inner, sizeof(inner), pkt, HSM_HEADER_SIZE, NULL, nonce, k_c2d);
-    memcpy(pkt + HSM_HEADER_SIZE + sizeof(inner), tag, 16);
-
-    if (bulk_xfer(h, pkt, HSM_HEADER_SIZE + sizeof(inner) + 16,
-                  resp, sizeof(resp), &resp_len) != 0) return;
-
-    /* 5. Decrypt the response envelope and read the inner result. */
-    memcpy(&rh, resp, sizeof(rh));
-    if (rh.status != HSM_OK || !(rh.flags & HSM_FLAG_ENCRYPTED)) {
-        printf("SESS  -> encrypted cmd failed (status=0x%04x)\n", rh.status);
-        return;
-    }
-    int ct_len = (int)rh.payload_length - 16;
-    if (ct_len < (int)HSM_HEADER_SIZE) { printf("SESS  -> short envelope\n"); return; }
-    make_nonce(nonce, HSM_NONCE_DIR_D2C, sid, rh.counter);
-    uint8_t inner_out[HSM_MAX_MSG];
-    if (crypto_aead_aes256gcm_decrypt_detached(
-            inner_out, NULL, resp + HSM_HEADER_SIZE, ct_len,
-            resp + HSM_HEADER_SIZE + ct_len, resp, HSM_HEADER_SIZE, nonce, k_d2c) != 0) {
-        printf("SESS  -> response authentication FAILED\n");
-        return;
-    }
-    hsm_header_t inh; memcpy(&inh, inner_out, sizeof(inh));
+    /* 4. Encrypted RANDOM(32), now through the session. */
+    uint8_t req[2] = { 32, 0 };
+    if (send_command(h, HSM_CMD_RANDOM, req, sizeof(req), resp, sizeof(resp), &resp_len) != 0) return;
+    hsm_header_t inh; memcpy(&inh, resp, sizeof(inh));
     printf("SESS  -> session 0x%08x established; encrypted RANDOM(32)=", sid);
     for (int i = 0; i < 32 && i < inh.payload_length; i++)
-        printf("%02x", inner_out[HSM_HEADER_SIZE + i]);
+        printf("%02x", resp[HSM_HEADER_SIZE + i]);
     printf("  [%s]\n", inh.status == HSM_OK ? "OK" : "inner error");
 }
 
@@ -641,13 +657,12 @@ int main(void)
     uint8_t resp[HSM_MAX_MSG];
     int resp_len = 0;
 
-    /* ---- AUTH (default PIN); key operations are gated behind login ---- */
+    /* ---- AUTH in plaintext must be refused: the PIN only travels in a session ---- */
     if (send_command(h, HSM_CMD_AUTH, (const uint8_t *)"123456", 6,
                      resp, sizeof(resp), &resp_len) == 0) {
         hsm_header_t *rh = (hsm_header_t *)resp;
-        const hsm_auth_resp_t *ar = (const hsm_auth_resp_t *)(resp + HSM_HEADER_SIZE);
-        printf("AUTH  -> status=0x%04x tries_left=%u  [%s]\n",
-               rh->status, ar->tries_left, rh->status == HSM_OK ? "OK" : "FAIL");
+        printf("AUTH  -> plaintext status=0x%04x  [%s]\n", rh->status,
+               rh->status == HSM_ERR_NO_SESSION ? "REFUSED OK" : "FAIL: PIN accepted in the clear");
     }
 
     /* ---- PING ---- */
@@ -742,6 +757,15 @@ int main(void)
     /* ---- Secure session (X25519 ECDH -> AES-256-GCM transport) ---- */
     do_session(h);
 
+    /* ---- AUTH (default PIN) in the session; key operations are gated behind login ---- */
+    if (send_command(h, HSM_CMD_AUTH, (const uint8_t *)"123456", 6,
+                     resp, sizeof(resp), &resp_len) == 0) {
+        hsm_header_t *rh = (hsm_header_t *)resp;
+        const hsm_auth_resp_t *ar = (const hsm_auth_resp_t *)(resp + HSM_HEADER_SIZE);
+        printf("AUTH  -> status=0x%04x tries_left=%u  [%s]\n",
+               rh->status, ar->tries_left, rh->status == HSM_OK ? "OK" : "FAIL");
+    }
+
     /* ---- Key store (generate / find / get, persisted to flash) ---- */
     do_keystore(h);
 
@@ -759,6 +783,18 @@ int main(void)
 
     /* ---- Audit log (events recorded for the operations above) ---- */
     do_audit(h);
+
+    /* Close the session so repeated runs do not use up the device's slots.
+     * CLOSE_SESSION is sent outside the envelope, with the id in the header. */
+    if (g_sess.open) {
+        uint8_t pkt[HSM_HEADER_SIZE];
+        hsm_header_t ch; memset(&ch, 0, sizeof(ch));
+        ch.command = HSM_CMD_CLOSE_SESSION;
+        ch.session_id = g_sess.sid;
+        memcpy(pkt, &ch, sizeof(ch));
+        bulk_xfer(h, pkt, sizeof(pkt), resp, sizeof(resp), &resp_len);
+        sodium_memzero(&g_sess, sizeof(g_sess));
+    }
 
     libusb_release_interface(h, 0);
     libusb_close(h);
