@@ -140,6 +140,12 @@ Encrypted commands: outer command `SESSION_DATA`, flag `ENCRYPTED`, payload =
 per-direction counter (anti-replay). The device decrypts the envelope, runs the
 inner command as plaintext, and encrypts the response.
 
+The device holds `HSM_MAX_SESSIONS` (4) sessions. When all are in use,
+OPEN_SESSION reuses the least recently used one, preferring sessions that are
+not logged in, so clients that vanish without CLOSE_SESSION cannot lock the
+device until a power cycle. The evicted client's next envelope gets
+`NO_SESSION`.
+
 ---
 
 ## 6. Key store & key hierarchy

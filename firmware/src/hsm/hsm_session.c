@@ -36,10 +36,12 @@ typedef struct {
     uint8_t  k_d2c[32];
     uint32_t rx_counter;  /* last accepted host->device counter */
     uint32_t tx_counter;  /* next device->host counter to use   */
+    uint32_t last_used;   /* use_tick at open / last accepted envelope */
 } session_t;
 
 static session_t sessions[HSM_MAX_SESSIONS];
 static uint32_t   next_session_id = 1;
+static uint32_t   use_tick;
 
 /* Scratch (word-aligned for the AES HAL). */
 static __attribute__((aligned(4))) uint8_t inner_plain[HSM_MAX_MSG];
@@ -67,14 +69,25 @@ static session_t *find_session(uint32_t id)
     return NULL;
 }
 
+/* A free slot, or else the least recently used one, logged-out sessions first.
+ * Clients that die without CLOSE_SESSION (a killed process, a restarted pod)
+ * would otherwise fill the table until power-cycle; preferring logged-out
+ * victims keeps a flood of bare handshakes from evicting a working login. */
 static session_t *alloc_session(void)
 {
+    session_t *victim = &sessions[0];
     for (unsigned i = 0; i < HSM_MAX_SESSIONS; i++) {
-        if (!sessions[i].valid) {
-            return &sessions[i];
+        session_t *s = &sessions[i];
+        if (!s->valid) {
+            return s;
+        }
+        if (s->authenticated < victim->authenticated ||
+            (s->authenticated == victim->authenticated && s->last_used < victim->last_used)) {
+            victim = s;
         }
     }
-    return NULL;
+    secure_zero(victim, sizeof(*victim));
+    return victim;
 }
 
 static void make_nonce(uint8_t nonce[HSM_GCM_NONCE_LEN], uint8_t dir,
@@ -130,13 +143,7 @@ size_t HSM_Session_Open(const uint8_t *req, size_t req_len,
         return HSM_BuildResponse(resp, req, HSM_ERR_INTERNAL, 0);
     }
 
-    session_t *s = alloc_session();
-    if (s == NULL) {
-        secure_zero(eph_priv, sizeof(eph_priv));
-        secure_zero(shared, sizeof(shared));
-        secure_zero(okm, sizeof(okm));
-        return HSM_BuildResponse(resp, req, HSM_ERR_INTERNAL, 0);
-    }
+    session_t *s = alloc_session();   /* never NULL: a full table reuses a slot */
 
     s->session_id = next_session_id++;
     if (next_session_id == 0) next_session_id = 1;
@@ -146,6 +153,7 @@ size_t HSM_Session_Open(const uint8_t *req, size_t req_len,
     s->tx_counter = 1;
     s->valid = 1;
     s->authenticated = 0;   /* fresh session starts logged-out */
+    s->last_used = ++use_tick;
 
     /* Wipe transient secrets. */
     secure_zero(eph_priv, sizeof(eph_priv));
@@ -216,6 +224,7 @@ size_t HSM_Session_Unwrap(const uint8_t *req, size_t req_len,
         return HSM_BuildResponse(resp, req, HSM_ERR_NOT_AUTHORIZED, 0);
     }
     s->rx_counter = hdr.counter;
+    s->last_used = ++use_tick;
 
     /* Run the inner (decrypted) command. Bound its response so the encrypted
      * envelope (header + ct + tag) fits in resp_cap. */
