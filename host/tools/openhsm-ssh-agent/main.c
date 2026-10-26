@@ -9,7 +9,7 @@
  *
  * Usage:
  *   openhsm-ssh-agent [-a <socket>] [-k <key-id> | -l <label>] [-c <comment>]
- *   --pin <pin>   device PIN (or env OPENHSM_PIN; default 123456)
+ *   --pin <pin>   device PIN (or env OPENHSM_PIN); required
  *   --addr host:port  talk to openhsm-daemon (or env OPENHSM_ADDR)
  *
  * Then in another shell:
@@ -42,7 +42,7 @@ static ohsm_ctx *g_ctx;
 static uint32_t  g_keyid;
 static uint8_t   g_pub[32];
 static const char *g_comment = "openhsm";
-static const char *g_pin = "123456";
+static const char *g_pin = NULL;   /* --pin or OPENHSM_PIN; no default */
 
 /* ---- big-endian SSH wire helpers ---------------------------------------- */
 typedef struct { uint8_t *p; size_t len, cap; } buf_t;
@@ -243,6 +243,7 @@ int main(int argc, char **argv)
 
     signal(SIGPIPE, SIG_IGN);
 
+    if (!g_pin) { fprintf(stderr, "no PIN: pass --pin or set OPENHSM_PIN\n"); return 2; }
     g_ctx = ohsm_open();
     if (!g_ctx) { fprintf(stderr, "cannot open device (USB or daemon)\n"); return 1; }
     if (device_login() != 0) { fprintf(stderr, "device login failed (wrong PIN?)\n"); return 1; }

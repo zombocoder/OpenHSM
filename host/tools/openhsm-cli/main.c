@@ -44,7 +44,9 @@ static double now_s(void)
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
-static const char *g_pin = "123456";
+/* No default: a guessed PIN burns one of HSM_PIN_MAX_TRIES, and a locked device
+ * can only be factory-reset (wiping every key). */
+static const char *g_pin = NULL;
 
 /* ---- helpers ------------------------------------------------------------- */
 static int hex2bin(const char *hex, uint8_t *out, int max)
@@ -115,6 +117,11 @@ static int login(ohsm_ctx *c)
 {
     uint8_t resp[HSM_MAX_MSG];
     int ol;
+    if (g_pin == NULL)
+    {
+        fprintf(stderr, "this command needs the PIN: pass --pin or set OPENHSM_PIN\n");
+        return -1;
+    }
     uint16_t st = cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
                       resp, sizeof(resp), NULL, &ol);
     if (st != HSM_OK)
@@ -1084,8 +1091,9 @@ static int c_factory_reset(ohsm_ctx *c, int ac, char **av)
     int ol;
     /* Best-effort login: the authenticated path is preferred, but a locked-out
      * device is allowed to reset too, so ignore an AUTH failure here. */
-    cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
-        resp, sizeof(resp), NULL, &ol);
+    if (g_pin)
+        cmd(c, HSM_CMD_AUTH, (const uint8_t *)g_pin, (uint16_t)strlen(g_pin),
+            resp, sizeof(resp), NULL, &ol);
     uint16_t st = cmd(c, HSM_CMD_FACTORY_RESET, NULL, 0, resp, sizeof(resp), NULL, &ol);
     if (st != HSM_OK)
     {
@@ -1109,12 +1117,13 @@ static int usage(void)
             "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
             "  audit [n|all] | audit-verify | initpin <pin> | setpin <old> <new> | bench [seconds] [payload-bytes]\n"
             "  fwupdate <openhsm_signed.bin> | tamper-test | factory-reset confirm\n"
-            "Env: OPENHSM_ADDR (= --addr), OPENHSM_DEBUG=1\n");
+            "Env: OPENHSM_ADDR (= --addr), OPENHSM_PIN (= --pin), OPENHSM_DEBUG=1\n");
     return 2;
 }
 
 int main(int argc, char **argv)
 {
+    g_pin = getenv("OPENHSM_PIN");
     int i = 1;
     for (; i < argc; i++)
     {

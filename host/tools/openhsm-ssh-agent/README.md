@@ -27,7 +27,8 @@ openhsm-ssh-agent [-a <socket>] [-k <key-id> | -l <label>] [-c <comment>]
 ```
 - `-l <label>` pick the Ed25519 key by label (default `myssh`); `-k <id>` by id.
 - `-a <socket>` unix socket path (default `/tmp/openhsm-ssh-agent.<pid>.sock`).
-- `--pin` device PIN (or env `OPENHSM_PIN`; default `123456`).
+- `--pin` device PIN (or env `OPENHSM_PIN`, which keeps it out of `ps`). Required;
+  there is no default.
 - `--addr host:port` talk to an `openhsm-daemon` instead of direct USB
   (or env `OPENHSM_ADDR`) — lets the key live on a remote HSM node.
 
@@ -53,6 +54,7 @@ openhsm-cli pubkey <id>                    # raw 32-byte hex (then wrap as ssh-e
 
 If you don't have a signing key yet, create one on the device:
 ```sh
+export OPENHSM_PIN=<your PIN>             # used by openhsm-cli and the agent
 openhsm-cli gen ed25519 myssh sign
 ```
 
@@ -68,7 +70,7 @@ print("ssh-ed25519",base64.b64encode(struct.pack(">I",11)+b"ssh-ed25519"+struct.
 docker build -t openhsm-sshtest docker/
 docker run -d --name openhsm-sshtest -p 2222:22 openhsm-sshtest
 
-openhsm-ssh-agent -a /tmp/ohsm-agent.sock -l myssh &
+OPENHSM_PIN=<your PIN> openhsm-ssh-agent -a /tmp/ohsm-agent.sock -l myssh &
 SSH_AUTH_SOCK=/tmp/ohsm-agent.sock ssh -p 2222 \
   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   tester@localhost 'id'        # -> uid=...(tester); signed on the HSM

@@ -3,7 +3,8 @@
 Maintenance & debugging CLI for OpenHSM devices. Works **locally over USB** or
 **remotely via openhsm-daemon** (for devices on another host / in Kubernetes).
 It reuses the shared transport, so the encrypted X25519/AES-GCM session and PIN
-login are handled automatically (gated commands auto-login with `--pin`).
+login are handled automatically: gated commands log in with `--pin` or env
+`OPENHSM_PIN` (no default, so a forgotten flag does not spend a PIN retry).
 
 ## Build
 

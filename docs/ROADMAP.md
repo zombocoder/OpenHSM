@@ -139,9 +139,9 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   device; a wipe yields an empty device, never the keys. `openhsm-cli factory-reset
   confirm`; the fresh log opens with a FACTORY_RESET entry. Verified on hardware
   (2026-10-04): authed reset, wrong-PIN refusal on a healthy device, lockout-path
-  reset, and the wiped state + fresh audit chain survive a power cycle. Note:
-  `openhsm-cli` defaults `--pin` to `123456`, so omitting it still authenticates
-  on a device left at the test PIN.
+  reset, and the wiped state + fresh audit chain survive a power cycle. Host
+  tools have no default PIN: gated commands need `--pin` or `OPENHSM_PIN`, so a
+  forgotten flag no longer spends a retry.
 - ⬜ **Multi-page store** to exceed ~50 objects (needs a second flash region).
 - ⬜ **Wear levelling** for the single-page store under heavy key churn.
 - ⬜ **RTC / trusted time** for real audit timestamps (currently seq-ordered only).
