@@ -13,6 +13,7 @@ add_executable(openhsm-ping main.c)
 target_include_directories(openhsm-ping PRIVATE
     ${LIBUSB_INCLUDE_DIRS}
     ${LIBSODIUM_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../pkcs11               # sodium_compat.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../firmware/src/hsm)
 
 target_link_directories(openhsm-ping PRIVATE ${LIBUSB_LIBRARY_DIRS} ${LIBSODIUM_LIBRARY_DIRS})

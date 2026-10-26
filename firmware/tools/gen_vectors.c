@@ -1,6 +1,7 @@
 /* Generates known-answer-test vectors for the firmware crypto self-test,
  * using libsodium as ground truth. Emits a C header on stdout. */
 #include <sodium.h>
+#include "../../host/pkcs11/sodium_compat.h"
 #include <stdio.h>
 #include <string.h>
 

@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <libusb.h>
 #include <sodium.h>
+#include "sodium_compat.h"
 
 #include "hsm_proto.h"
 

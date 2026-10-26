@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <libusb.h>
 #include <sodium.h>
+#include "sodium_compat.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
