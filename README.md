@@ -125,8 +125,11 @@ Verify what will actually be used with `make toolchain-check`.
 
 ## Current security caveats
 
-- Session handshake is **unauthenticated ECDH** (no MITM protection yet — needs
-  a provisioned device identity / certificate).
+- The session handshake is signed by a device identity key, but a host only
+  checks it when the key is pinned (`OPENHSM_DEVICE_KEY`, see
+  [openhsm-cli](host/tools/openhsm-cli/README.md)); without pinning it is
+  **unauthenticated ECDH** (no MITM protection). The identity key derives from
+  the KEK, so the next caveat applies to it too.
 - The KEK is derived from the readable device UID, so it is not yet confidential
   against an attacker who can read the chip — closing this needs RDP level 2 +
   TrustZone. No plaintext key material is ever stored in flash or exported.

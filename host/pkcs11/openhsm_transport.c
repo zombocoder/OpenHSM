@@ -5,7 +5,8 @@
  * On open it performs the X25519 ECDH handshake and derives directional
  * AES-256-GCM keys; every ohsm_cmd after that is wrapped in an encrypted
  * HSM_CMD_SESSION_DATA envelope (AAD = outer header, per-message nonce with an
- * increasing counter). Falls back to plaintext only if the handshake fails.
+ * increasing counter). There is no plaintext fallback: if the handshake fails,
+ * ohsm_open fails.
  */
 #include "openhsm_transport.h"
 #include "hsm_proto.h"
@@ -171,6 +172,36 @@ static int establish_session(ohsm_ctx *c)
     uint8_t dev_pub[32], dev_nonce[32], shared[32];
     memcpy(dev_pub, resp + HSM_HEADER_SIZE, 32);
     memcpy(dev_nonce, resp + HSM_HEADER_SIZE + 32, 32);
+
+    /* Pinned identity: with OPENHSM_DEVICE_KEY set (the device's Ed25519 key,
+     * hex, from `openhsm-cli identity` over a trusted link), the reply must
+     * carry the device's signature over this handshake, which a man in the
+     * middle (e.g. on the path to openhsm-daemon) cannot produce. */
+    const char *pinned = getenv("OPENHSM_DEVICE_KEY");
+    if (pinned && *pinned) {
+        uint8_t id_pub[crypto_sign_PUBLICKEYBYTES], t[HSM_ID_TRANSCRIPT_LEN], *p = t;
+        size_t n = 0;
+        if (sodium_hex2bin(id_pub, sizeof(id_pub), pinned, strlen(pinned),
+                           NULL, &n, NULL) != 0 || n != sizeof(id_pub)) {
+            fprintf(stderr, "openhsm: OPENHSM_DEVICE_KEY must be 64 hex characters\n");
+            return -1;
+        }
+        if (rl < (int)(HSM_HEADER_SIZE + 64 + crypto_sign_BYTES)) {
+            fprintf(stderr, "openhsm: handshake not signed (old firmware or tamper latch)\n");
+            return -1;
+        }
+        memcpy(p, HSM_ID_CONTEXT, HSM_ID_CONTEXT_LEN); p += HSM_ID_CONTEXT_LEN;
+        memcpy(p, eph_pub, 32);    p += 32;
+        memcpy(p, host_nonce, 32); p += 32;
+        memcpy(p, dev_pub, 32);    p += 32;
+        memcpy(p, dev_nonce, 32);  p += 32;
+        p[0] = (uint8_t)rh.session_id;         p[1] = (uint8_t)(rh.session_id >> 8);
+        p[2] = (uint8_t)(rh.session_id >> 16); p[3] = (uint8_t)(rh.session_id >> 24);
+        if (crypto_sign_verify_detached(resp + HSM_HEADER_SIZE + 64, t, sizeof(t), id_pub) != 0) {
+            fprintf(stderr, "openhsm: handshake signature does not match OPENHSM_DEVICE_KEY\n");
+            return -1;
+        }
+    }
     if (crypto_scalarmult_curve25519(shared, eph_priv, dev_pub) != 0) return -1;
 
     uint8_t salt[64], prk[crypto_kdf_hkdf_sha256_KEYBYTES], okm[64];
@@ -243,13 +274,15 @@ ohsm_ctx *ohsm_open(void)
         }
         c->claimed = 1;
     }
-    establish_session(c);  /* best-effort; plaintext fallback if it fails */
-    if (getenv("OPENHSM_DEBUG")) {
-        if (c->session_ok)
-            fprintf(stderr, "openhsm: secure session established (id=0x%08x)\n", c->session_id);
-        else
-            fprintf(stderr, "openhsm: WARNING running PLAINTEXT (handshake failed)\n");
+    /* Fail closed: a plaintext fallback would send the PIN in the clear, and
+     * anyone on the path can force one by breaking the handshake. */
+    if (establish_session(c) != 0) {
+        fprintf(stderr, "openhsm: secure session handshake failed\n");
+        ohsm_close(c);
+        return NULL;
     }
+    if (getenv("OPENHSM_DEBUG"))
+        fprintf(stderr, "openhsm: secure session established (id=0x%08x)\n", c->session_id);
     return c;
 }
 
@@ -280,9 +313,6 @@ int ohsm_cmd(ohsm_ctx *c, uint16_t command,
              uint8_t *resp, int resp_cap, int *resp_len)
 {
     if (c == NULL) return -1;
-    if (!c->session_ok) {
-        return cmd_plain(c, command, payload, plen, resp, resp_cap, resp_len);
-    }
 
     /* Build the inner plaintext packet. */
     uint8_t inner[HSM_MAX_MSG];

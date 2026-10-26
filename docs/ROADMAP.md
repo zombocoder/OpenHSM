@@ -164,7 +164,10 @@ DFU-flashable dev board (do last, or on a sacrificial board).
   closed is still denied (no leak). No client changes (they already AUTH
   in-session). Remaining: explicit device-side C_Logout, idle timeout.
 - ⬜ Optional: challenge-response / hardware admin token.
-- ⬜ Authenticated session handshake (device cert) — depends on D.
+- 🟡 Authenticated session handshake: the device signs every handshake with an
+  identity key derived from the KEK, and hosts pinning it (`OPENHSM_DEVICE_KEY`,
+  `openhsm-cli identity`) refuse a man in the middle. Remaining: a manufacturer
+  certificate instead of pinning, and a secret root for the key (depends on D).
 
 ### G. PKCS#11 provider robustness (host, production-relevant)
 - ✅ **Thread safety**: a global mutex serializes every device exchange (the

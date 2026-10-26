@@ -59,6 +59,10 @@ uint32_t HSM_KeyStore_ReserveAudit(uint32_t count);
 /** @brief Derive the audit chain key from the KEK. */
 void HSM_KeyStore_AuditKey(uint8_t out[32]);
 
+/** @brief Derive the device identity Ed25519 seed from the KEK.
+ *  @return HSM_OK, or HSM_ERR_NOT_AUTHORIZED while tamper-latched (KEK zeroized). */
+uint16_t HSM_KeyStore_IdentitySeed(uint8_t out[32]);
+
 /**
  * @brief Generate a new random key, encrypt it under the KEK, persist it.
  * @return HSM_OK or an hsm_status_t error.

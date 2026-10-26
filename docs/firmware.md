@@ -83,6 +83,7 @@ not the USB ISR.
 | 0x0002        | GET_INFO                   |   no    | proto/fw version, 96-bit UID                                                |
 | 0x0003        | SELFTEST                   |   no    | crypto KAT (per-primitive results)                                          |
 | 0x0004        | ECHO                       |   no    | returns payload (test)                                                      |
+| 0x0005        | GET_IDENTITY               |   no    | device identity public key (Ed25519, 32 B)                                  |
 | 0x0010        | OPEN_SESSION               |   no    | X25519 handshake → session keys                                             |
 | 0x0011        | CLOSE_SESSION              |   no    | zeroizes session keys                                                       |
 | 0x0012        | AUTH                       |   no    | PIN login (retry counter / lockout)                                         |
@@ -122,12 +123,14 @@ require a prior successful AUTH (login state is global per power cycle).
 
 ## 5. Secure session
 
-Unauthenticated ephemeral ECDH (confidentiality + integrity; device-identity /
-MITM protection is a future milestone — see ROADMAP):
+Ephemeral ECDH, signed by the device identity key (confidentiality +
+integrity; MITM protection for hosts that pin the identity):
 
 ```
 host → OPEN_SESSION { eph_pub_h(32) , nonce_h(32) }
-dev  → { eph_pub_d(32) , nonce_d(32) } , session_id in header
+dev  → { eph_pub_d(32) , nonce_d(32) , sig(64) } , session_id in header
+      sig = Ed25519(identity, "OpenHSM/v1 handshake" ‖ eph_pub_h ‖ nonce_h
+                              ‖ eph_pub_d ‖ nonce_d ‖ session_id(LE32))
 both: shared = X25519(eph_priv, peer_pub)
       okm    = HKDF-SHA256(salt = nonce_h‖nonce_d, ikm = shared,
                            info = "OpenHSM/v1 session keys", 64)
@@ -139,6 +142,20 @@ Encrypted commands: outer command `SESSION_DATA`, flag `ENCRYPTED`, payload =
 `[dir | 0 0 0 | session_id(LE) | counter(LE)]` with a strictly-increasing
 per-direction counter (anti-replay). The device decrypts the envelope, runs the
 inner command as plaintext, and encrypts the response.
+
+The identity seed is `HKDF(salt="OpenHSM-ID-v1", ikm=KEK)`, so it is stable
+across reboots and factory reset, and it is exactly as secret as the KEK
+(today: not against someone holding the chip, see §6). A host pins the public
+half (`GET_IDENTITY`, read once over a trusted link) via `OPENHSM_DEVICE_KEY`
+and refuses a handshake whose signature does not verify. While tamper-latched
+the KEK is zeroized, so the device sends no signature and pinning hosts refuse
+to connect. Hosts that do not pin ignore the extra 64 bytes.
+
+The device holds `HSM_MAX_SESSIONS` (4) sessions. When all are in use,
+OPEN_SESSION reuses the least recently used one, preferring sessions that are
+not logged in, so clients that vanish without CLOSE_SESSION cannot lock the
+device until a power cycle. The evicted client's next envelope gets
+`NO_SESSION`.
 
 ---
 

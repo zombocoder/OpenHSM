@@ -15,6 +15,7 @@
 #   make all        firmware + host (default)
 #   make flash      program the board over DFU (hold BOOT0, tap RESET first)
 #   make ping       run the host test client against a running board
+#   make test       run the host-side firmware tests (no board needed)
 #   make clean      remove build directories
 #   make distclean  clean + deinit submodules
 #
@@ -30,6 +31,7 @@ CLI_DIR    := host/tools/openhsm-cli
 CLI_BUILD  := $(CLI_DIR)/build
 AGENT_DIR  := host/tools/openhsm-ssh-agent
 AGENT_BUILD := $(AGENT_DIR)/build
+TEST_BUILD := $(FW_DIR)/tests/build
 
 # A sentinel file that exists only once submodules are checked out.
 DEPS_SENTINEL := $(FW_DIR)/vendor/cmsis_core/CMSIS/Core/Include/core_cm33.h
@@ -90,7 +92,7 @@ SODIUM_LIBS   := $(shell pkg-config --libs libsodium 2>/dev/null || echo -lsodiu
 VENDOR_SEED   := $(FW_DIR)/keys/vendor_ed25519.seed
 VENDOR_PUBKEY := $(FW_DIR)/bootloader/vendor_pubkey.h
 
-.PHONY: all firmware toolchain toolchain-check sign-tool keygen host cli ssh-agent flash ping clean distclean deps help
+.PHONY: all firmware toolchain toolchain-check sign-tool keygen host cli ssh-agent flash ping test clean distclean deps help
 
 all: firmware host
 
@@ -209,9 +211,21 @@ ssh-agent:
 	cmake -S $(AGENT_DIR) -B $(AGENT_BUILD)
 	cmake --build $(AGENT_BUILD) -j
 
+# --- host-side firmware tests ----------------------------------------------
+MONO := $(FW_DIR)/vendor/monocypher/src
+test: $(DEPS_SENTINEL)
+	@mkdir -p $(TEST_BUILD)
+	$(HOSTCC) -Wall -Wextra -I$(FW_DIR)/src/hsm -I$(FW_DIR)/src/crypto -Ihost/pkcs11 \
+	    -I$(MONO) -I$(MONO)/optional $(shell pkg-config --cflags libusb-1.0 libsodium) \
+	    -o $(TEST_BUILD)/session_test $(FW_DIR)/tests/session_test.c \
+	    $(FW_DIR)/src/hsm/hsm_session.c $(FW_DIR)/src/crypto/hsm_eddsa.c \
+	    $(MONO)/monocypher.c $(MONO)/optional/monocypher-ed25519.c host/pkcs11/openhsm_transport.c \
+	    $(shell pkg-config --libs libusb-1.0 libsodium) -lpthread
+	$(TEST_BUILD)/session_test
+
 # --- housekeeping -----------------------------------------------------------
 clean:
-	rm -rf $(FW_BUILD) $(HOST_BUILD) $(CLI_BUILD) $(AGENT_BUILD) $(FW_DIR)/tools/gen_vectors $(SIGN_TOOL)
+	rm -rf $(FW_BUILD) $(HOST_BUILD) $(CLI_BUILD) $(AGENT_BUILD) $(TEST_BUILD) $(FW_DIR)/tools/gen_vectors $(SIGN_TOOL)
 
 distclean: clean
 	-git submodule deinit -f --all

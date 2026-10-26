@@ -188,6 +188,18 @@ size_t HSM_ProcessPlaintext(const uint8_t *req, size_t req_len,
         return build_response(resp, &hdr, HSM_OK, (uint16_t)sizeof(info));
     }
 
+    case HSM_CMD_GET_IDENTITY: {
+        uint8_t seed[HSM_ED25519_SEED_LEN];
+        uint16_t st = HSM_KeyStore_IdentitySeed(seed);
+        if (st != HSM_OK) {
+            return build_response(resp, &hdr, st, 0);
+        }
+        HSM_Ed25519_Public(seed, resp + HSM_HEADER_SIZE);
+        volatile uint8_t *v = seed;
+        for (size_t i = 0; i < sizeof(seed); i++) v[i] = 0;
+        return build_response(resp, &hdr, HSM_OK, HSM_ED25519_PUB_LEN);
+    }
+
     case HSM_CMD_ECHO: {
         uint16_t n = hdr.payload_length;
         if (HSM_HEADER_SIZE + n > resp_cap) {

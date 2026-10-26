@@ -11,6 +11,7 @@
  * Commands:
  *   ping                         liveness check
  *   info                         device info (proto/fw/serial)
+ *   identity                     device identity public key (hex), for OPENHSM_DEVICE_KEY
  *   selftest                     crypto known-answer self-test
  *   random <n>                   <n> random bytes (hex)
  *   list                         list key objects
@@ -202,6 +203,26 @@ static int c_info(ohsm_ctx *c, int ac, char **av)
            (in.fw_version >> 8) & 0xFF, in.fw_version & 0xFF);
     for (int i = 0; i < 12; i++)
         printf("%02x", in.serial[i]);
+    printf("\n");
+    return 0;
+}
+/* The device identity key, for pinning via OPENHSM_DEVICE_KEY. Read it over a
+ * trusted link (local USB), not through the network path it is meant to protect. */
+static int c_identity(ohsm_ctx *c, int ac, char **av)
+{
+    (void)ac;
+    (void)av;
+    uint8_t resp[HSM_MAX_MSG];
+    const uint8_t *o;
+    int ol;
+    uint16_t st = cmd(c, HSM_CMD_GET_IDENTITY, NULL, 0, resp, sizeof(resp), &o, &ol);
+    if (st != HSM_OK || ol != 32)
+    {
+        fprintf(stderr, "identity: %s\n", st != HSM_OK ? status_str(st) : "bad length");
+        return 1;
+    }
+    for (int i = 0; i < 32; i++)
+        printf("%02x", o[i]);
     printf("\n");
     return 0;
 }
@@ -1103,7 +1124,7 @@ static int usage(void)
 {
     fprintf(stderr,
             "openhsm-cli [--addr host:port] [--pin PIN] <command> [args]\n"
-            "  ping | info | selftest | storage | random <n> | list | get <id> | pubkey <id>\n"
+            "  ping | info | identity | selftest | storage | random <n> | list | get <id> | pubkey <id>\n"
             "  gen <aes|hmac|ed25519|x25519> <label> [caps] | del <id>\n"
             "  sign <id> <msg> | hmac <id> <msg> | encrypt <id> <hex> | decrypt <id> <noncehex> <cthex>\n"
             "  wrap <wrapid> <targetid> | unwrap <wrapid> <label> <blobhex>\n"
@@ -1149,6 +1170,8 @@ int main(int argc, char **argv)
         rc = c_ping(c, ac, av);
     else if (!strcmp(sub, "info"))
         rc = c_info(c, ac, av);
+    else if (!strcmp(sub, "identity"))
+        rc = c_identity(c, ac, av);
     else if (!strcmp(sub, "selftest"))
         rc = c_selftest(c, ac, av);
     else if (!strcmp(sub, "storage"))

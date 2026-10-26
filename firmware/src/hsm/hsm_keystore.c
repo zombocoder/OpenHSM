@@ -434,6 +434,14 @@ void HSM_KeyStore_AuditKey(uint8_t out[32])
                    NULL, 0, out, 32);
 }
 
+uint16_t HSM_KeyStore_IdentitySeed(uint8_t out[32])
+{
+    if (tampered) return HSM_ERR_NOT_AUTHORIZED;
+    HSM_HkdfSha256((const uint8_t *)"OpenHSM-ID-v1", 13, kek, sizeof(kek),
+                   NULL, 0, out, 32);
+    return HSM_OK;
+}
+
 uint16_t HSM_KeyStore_Encrypt(uint32_t id, const uint8_t nonce[12],
                               const uint8_t *aad, uint16_t aad_len,
                               const uint8_t *pt, uint16_t pt_len,

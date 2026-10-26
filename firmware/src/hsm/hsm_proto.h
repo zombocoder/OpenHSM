@@ -52,6 +52,7 @@ typedef enum {
     HSM_CMD_GET_INFO        = 0x0002,
     HSM_CMD_SELFTEST        = 0x0003,
     HSM_CMD_ECHO            = 0x0004,  /* returns the request payload verbatim */
+    HSM_CMD_GET_IDENTITY    = 0x0005,  /* device identity public key (Ed25519)  */
     HSM_CMD_OPEN_SESSION    = 0x0010,
     HSM_CMD_CLOSE_SESSION   = 0x0011,
     HSM_CMD_AUTH            = 0x0012,
@@ -110,9 +111,13 @@ typedef struct __attribute__((packed)) {
 #define HSM_INFO_PIN_SET   0x02u   /* a user PIN has been provisioned (else INIT_PIN needed) */
 
 /* ---- Secure session (X25519 ECDH -> HKDF-SHA256 -> AES-256-GCM) ---------- *
- * Handshake is unauthenticated ECDH for now (transport confidentiality +
- * integrity, but no device-identity / MITM protection — that comes with the
- * device certificate milestone). Encrypted commands set HSM_FLAG_ENCRYPTED,
+ * The OPEN_SESSION response is eph_pub_d || nonce_d || sig, where sig is the
+ * device identity key's Ed25519 signature over the transcript below. A host
+ * that pins the identity public key (GET_IDENTITY, read once over a trusted
+ * link) verifies it, which defeats a man in the middle; a host that does not
+ * pin it gets an unauthenticated ECDH session as before. The identity key is
+ * derived from the KEK root, so it survives reboots and factory reset; sig is
+ * omitted while the device is tamper-latched. Encrypted commands set HSM_FLAG_ENCRYPTED,
  * carry the outer command HSM_CMD_SESSION_DATA, and their payload is
  * ciphertext || 16-byte GCM tag, with the 16-byte outer header as AAD.
  *
@@ -121,6 +126,12 @@ typedef struct __attribute__((packed)) {
  * dir = 0 host->device, 1 device->host; each direction uses its own key. */
 #define HSM_NONCE_DIR_C2D   0x00u
 #define HSM_NONCE_DIR_D2C   0x01u
+
+/* Signed handshake transcript:
+ *   HSM_ID_CONTEXT || eph_pub_h || nonce_h || eph_pub_d || nonce_d || session_id(4 LE) */
+#define HSM_ID_CONTEXT          "OpenHSM/v1 handshake"
+#define HSM_ID_CONTEXT_LEN      (sizeof(HSM_ID_CONTEXT) - 1)
+#define HSM_ID_TRANSCRIPT_LEN   (HSM_ID_CONTEXT_LEN + 4 * 32 + 4)
 
 typedef struct __attribute__((packed)) {
     uint8_t eph_pub[32];      /* sender ephemeral X25519 public key             */

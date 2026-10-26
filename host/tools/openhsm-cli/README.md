@@ -20,11 +20,21 @@ openhsm-cli [--addr host:port] [--pin PIN] <command> [args]
 
 - `--addr host:port` (or env `OPENHSM_ADDR`) → talk to an openhsm-daemon instead
   of direct USB. `OPENHSM_DEBUG=1` traces the session.
+- `OPENHSM_DEVICE_KEY=<hex>` → pin the device identity: the session is refused
+  unless the handshake is signed by that key, which defeats a man in the middle
+  on the daemon path. Every tool on the shared transport honours it (CLI,
+  ssh-agent, PKCS#11 module). Read the key once over local USB:
+
+  ```sh
+  openhsm-cli identity            # on the host the device is plugged into
+  export OPENHSM_DEVICE_KEY=<that hex>
+  ```
 
 | Command                               | Description                                                                                                             |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `ping`                                | liveness check                                                                                                          |
 | `info`                                | proto/fw version + device serial                                                                                        |
+| `identity`                            | device identity public key (Ed25519, hex) for `OPENHSM_DEVICE_KEY`                                                      |
 | `selftest`                            | crypto known-answer self-test                                                                                           |
 | `storage`                             | key-store capacity & fill (used/max slots, region bytes)                                                                |
 | `random <n>`                          | `n` random bytes (hex)                                                                                                  |
